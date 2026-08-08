@@ -15,6 +15,7 @@ import { TestimonialsPanel } from "@/components/admin/TestimonialsPanel";
 import { FaqsPanel } from "@/components/admin/FaqsPanel";
 import { SettingsPanel } from "@/components/admin/SettingsPanel";
 import { ClientDocumentsPanel } from "@/components/admin/ClientDocumentsPanel";
+import { GoogleWorkspacePanel } from "@/components/admin/GoogleWorkspacePanel";
 
 const title = "Admin Panel | The Tax Maestro";
 const description =
@@ -99,6 +100,7 @@ function AdminPage() {
       <main className="mx-auto max-w-6xl px-4 py-8">
         <Tabs defaultValue="documents">
           <TabsList className="flex-wrap">
+            <TabsTrigger value="workspace">Google Drive & Sheets</TabsTrigger>
             <TabsTrigger value="documents">Client Documents & Links</TabsTrigger>
             <TabsTrigger value="leads">Enquiries</TabsTrigger>
             <TabsTrigger value="services">Services</TabsTrigger>
@@ -106,6 +108,9 @@ function AdminPage() {
             <TabsTrigger value="faqs">FAQs</TabsTrigger>
             <TabsTrigger value="settings">Business info</TabsTrigger>
           </TabsList>
+          <TabsContent value="workspace" className="mt-6">
+            <GoogleWorkspacePanel />
+          </TabsContent>
           <TabsContent value="documents" className="mt-6">
             <ClientDocumentsPanel />
           </TabsContent>

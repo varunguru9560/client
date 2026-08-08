@@ -32,7 +32,7 @@ import {
   normalizePhone,
   ClientDocument,
 } from "@/lib/client-vault";
-import { supabase } from "@/integrations/supabase/client";
+import { getStoredLeads, LeadItem } from "@/lib/leads.store";
 
 export function ClientDocumentsPanel() {
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
@@ -60,19 +60,22 @@ export function ClientDocumentsPanel() {
 
   useEffect(() => {
     reload();
-    // Load leads from Supabase for easy autocomplete selector
-    supabase
-      .from("leads")
-      .select("name, phone, email")
-      .then(({ data }) => {
-        if (data) {
-          setLeadsList(data);
-        }
-      });
+
+    const loadLeads = () => {
+      const stored = getStoredLeads();
+      setLeadsList(stored.map((l) => ({ name: l.name, phone: l.phone, email: l.email })));
+    };
+    loadLeads();
 
     const handleDocsChange = () => reload();
+    const handleLeadsChange = () => loadLeads();
+
     window.addEventListener("client-docs-changed", handleDocsChange);
-    return () => window.removeEventListener("client-docs-changed", handleDocsChange);
+    window.addEventListener("leads-changed", handleLeadsChange);
+    return () => {
+      window.removeEventListener("client-docs-changed", handleDocsChange);
+      window.removeEventListener("leads-changed", handleLeadsChange);
+    };
   }, []);
 
   const handleSelectLead = (phoneNum: string) => {

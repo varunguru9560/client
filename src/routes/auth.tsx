@@ -1,15 +1,22 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link, useSearch } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Lock } from "lucide-react";
+import { Lock, ShieldAlert, KeyRound, UserCheck, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Toaster } from "@/components/ui/sonner";
+import {
+  getAuthorizedAdminEmails,
+  saveAuthorizedAdminEmails,
+  isAllowedAdminEmail,
+  claimAdminSlot,
+  resetAllAdminSessions,
+} from "@/lib/admin-auth";
 
 const title = "Admin Sign In | The Tax Maestro";
-const description = "Secure sign in for The Tax Maestro admin panel.";
+const description = "Restricted sign in for the 2 authorized Tax Maestro administrators.";
 
 export const Route = createFileRoute("/auth")({
   ssr: false,
@@ -29,16 +36,36 @@ export const Route = createFileRoute("/auth")({
 
 function AuthPage() {
   const navigate = useNavigate();
+  const searchParams = useSearch({ strict: false }) as { unauthorized?: string };
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Admin credentials reset modal / tab state
+  const [showResetForm, setShowResetForm] = useState(false);
+  const [allowedAdmin1, setAllowedAdmin1] = useState("");
+  const [allowedAdmin2, setAllowedAdmin2] = useState("");
+  const [authorizedList, setAuthorizedList] = useState<string[]>([]);
+
   useEffect(() => {
+    const list = getAuthorizedAdminEmails();
+    setAuthorizedList(list);
+    setAllowedAdmin1(list[0] || "");
+    setAllowedAdmin2(list[1] || "");
+
+    if (searchParams.unauthorized === "true") {
+      toast.error("Access Denied", {
+        description: "Only the 2 authorized admin users are permitted to access the admin panel.",
+      });
+    }
+
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate({ to: "/admin", replace: true });
+      if (data.session && isAllowedAdminEmail(data.session.user.email)) {
+        navigate({ to: "/admin", replace: true });
+      }
     });
-  }, [navigate]);
+  }, [navigate, searchParams.unauthorized]);
 
   const handleGoogleAuth = async () => {
     setBusy(true);
@@ -54,21 +81,60 @@ function AuthPage() {
     }
   };
 
+  const handleSaveAllowedAdmins = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!allowedAdmin1 && !allowedAdmin2) {
+      toast.error("Please provide at least 1 authorized admin email address");
+      return;
+    }
+
+    setBusy(true);
+    // Reset existing sessions
+    await resetAllAdminSessions();
+
+    const updated = saveAuthorizedAdminEmails([allowedAdmin1, allowedAdmin2]);
+    setAuthorizedList(updated);
+    setBusy(false);
+    setShowResetForm(false);
+
+    toast.success("Admin access credentials reset successfully", {
+      description: `Restricted to 2 users: ${updated.join(", ")}`,
+    });
+  };
+
   const onSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
+    const normalizedEmail = email.trim().toLowerCase();
+
     if (password.length < 8) {
       toast.error("Password must be at least 8 characters");
       return;
     }
+
+    // Check authorization
+    if (!isAllowedAdminEmail(normalizedEmail)) {
+      toast.error("Access Restricted", {
+        description: `"${normalizedEmail}" is not listed as one of the 2 authorized admin accounts.`,
+      });
+      return;
+    }
+
     setBusy(true);
+
     if (mode === "signin") {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       setBusy(false);
+
       if (error) {
         toast.error("Sign in failed", { description: error.message });
         return;
       }
-      navigate({ to: "/admin", replace: true });
+
+      if (data.user) {
+        claimAdminSlot(data.user.email || normalizedEmail);
+        toast.success("Welcome back, Admin!");
+        navigate({ to: "/admin", replace: true });
+      }
     } else {
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -76,34 +142,128 @@ function AuthPage() {
         options: { emailRedirectTo: `${window.location.origin}/admin` },
       });
       setBusy(false);
+
       if (error) {
         toast.error("Sign up failed", { description: error.message });
         return;
       }
+
+      claimAdminSlot(normalizedEmail);
+
       if (data.session) {
+        toast.success("Admin account created successfully");
         navigate({ to: "/admin", replace: true });
       } else {
-        toast.success("Check your email to confirm your account");
+        toast.success("Check your email to confirm your admin account");
       }
     }
   };
 
   return (
     <div className="grid min-h-screen place-items-center bg-muted/50 px-4 py-8">
-      <div className="w-full max-w-md rounded-[var(--radius-xl)] border border-border bg-card p-8 shadow-[var(--shadow-card)]">
-        <span className="grid size-11 place-items-center rounded-xl bg-brand-soft">
-          <Lock className="size-5 text-brand" />
-        </span>
-        <h1 className="mt-5 text-2xl font-semibold">
-          {mode === "signin" ? "Admin sign in" : "Create admin account"}
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {mode === "signin"
-            ? "Sign in to manage services, reviews, FAQs and enquiries."
-            : "The first account created becomes the site administrator."}
-        </p>
+      <div className="w-full max-w-md rounded-[var(--radius-xl)] border border-border bg-card p-8 shadow-[var(--shadow-card)] space-y-6">
+        <div>
+          <span className="grid size-11 place-items-center rounded-xl bg-brand-soft">
+            <Lock className="size-5 text-brand" />
+          </span>
+          <h1 className="mt-4 text-2xl font-semibold">
+            {mode === "signin" ? "Admin Sign In" : "Create Admin Account"}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Access strictly restricted to 2 authorized Tax Maestro administrators.
+          </p>
+        </div>
 
-        <div className="mt-6">
+        {/* Authorized Admin Status Banner */}
+        <div className="rounded-xl border border-brand/20 bg-brand-soft/40 p-3.5 text-xs text-brand-foreground space-y-1.5">
+          <div className="flex items-center gap-1.5 font-semibold text-brand">
+            <UserCheck className="size-4" /> Allowed Admin Accounts (Max 2)
+          </div>
+          <div className="flex flex-col gap-1 text-muted-foreground">
+            {authorizedList.map((usr, idx) => (
+              <span
+                key={idx}
+                className="font-mono text-[11px] bg-background/80 px-2 py-0.5 rounded border border-border/50"
+              >
+                User {idx + 1}: {usr}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Option to Reset Admin Credentials / Authorized List */}
+        {!showResetForm ? (
+          <div className="flex items-center justify-between border-t border-border pt-3">
+            <span className="text-xs text-muted-foreground">Need to reset admin logins?</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowResetForm(true)}
+              className="text-xs h-8 text-brand hover:text-brand"
+            >
+              <KeyRound className="mr-1 size-3.5" /> Reset Admin Logins
+            </Button>
+          </div>
+        ) : (
+          <form
+            onSubmit={handleSaveAllowedAdmins}
+            className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 space-y-3 dark:border-amber-900/50 dark:bg-amber-950/20"
+          >
+            <div className="flex items-center gap-2 text-xs font-semibold text-amber-800 dark:text-amber-300">
+              <ShieldAlert className="size-4 text-amber-600" />
+              Reset & Set 2 Authorized Admin Emails
+            </div>
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              This will log out all existing sessions and assign administrative access exclusively
+              to the 2 specified emails below.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="admin1" className="text-xs">
+                Admin Email 1
+              </Label>
+              <Input
+                id="admin1"
+                type="email"
+                required
+                placeholder="admin1@taxmaestro.com"
+                value={allowedAdmin1}
+                onChange={(e) => setAllowedAdmin1(e.target.value)}
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="admin2" className="text-xs">
+                Admin Email 2
+              </Label>
+              <Input
+                id="admin2"
+                type="email"
+                placeholder="admin2@taxmaestro.com"
+                value={allowedAdmin2}
+                onChange={(e) => setAllowedAdmin2(e.target.value)}
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Button type="submit" size="sm" variant="cta" disabled={busy} className="h-8 text-xs">
+                {busy ? <RefreshCw className="size-3 animate-spin mr-1" /> : null} Save & Reset
+                Access
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setShowResetForm(false)}
+                className="h-8 text-xs"
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
+
+        <div>
           <Button
             type="button"
             variant="outline"
@@ -140,11 +300,12 @@ function AuthPage() {
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="email">Admin Email</Label>
             <Input
               id="email"
               type="email"
               required
+              placeholder="Enter your authorized admin email"
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -156,25 +317,30 @@ function AuthPage() {
               id="password"
               type="password"
               required
+              placeholder="••••••••"
               autoComplete={mode === "signin" ? "current-password" : "new-password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
           <Button type="submit" variant="cta" className="w-full" disabled={busy}>
-            {busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
+            {busy
+              ? "Please wait…"
+              : mode === "signin"
+                ? "Sign in to Admin Panel"
+                : "Create Authorized Admin Account"}
           </Button>
         </form>
 
         <button
           type="button"
           onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-          className="mt-5 text-sm text-brand underline-offset-4 hover:underline"
+          className="mt-2 text-sm text-brand underline-offset-4 hover:underline"
         >
-          {mode === "signin" ? "Need an account? Create one" : "Already have an account? Sign in"}
+          {mode === "signin" ? "Need an admin account? Register" : "Already registered? Sign in"}
         </button>
 
-        <div className="mt-6 border-t border-border pt-4 text-sm">
+        <div className="border-t border-border pt-4 text-sm">
           <Link to="/" className="text-muted-foreground hover:text-brand">
             ← Back to website
           </Link>

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { setStoredClientUser, normalizePhone } from "@/lib/client-vault";
+import { googleWorkspaceSignIn } from "@/lib/google-workspace";
 
 interface AuthModalProps {
   open: boolean;
@@ -78,25 +79,17 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
   const handleGoogleAuth = async () => {
     setBusy(true);
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: `${window.location.origin}/`,
-        },
-      });
-
-      if (error) {
-        console.warn("Supabase Google Auth notice:", error.message);
-        // Fallback smooth login if OAuth credentials aren't configured in Supabase console yet
+      const res = await googleWorkspaceSignIn();
+      if (res) {
         setStoredClientUser({
           phone: "9876543210",
-          name: "Google Account Client",
-          email: "client@gmail.com",
+          name: res.user.displayName || "Google Client",
+          email: res.user.email || "client@gmail.com",
           authProvider: "google",
           isLoggedIn: true,
         });
-        toast.success("Signed in with Google", {
-          description: "Connected with Google profile. Accessing your client vault...",
+        toast.success(`Welcome, ${res.user.displayName || "Google Client"}!`, {
+          description: "Connected with Google Workspace. Your vault is unlocked.",
         });
         onOpenChange(false);
         setTimeout(() => {
@@ -104,16 +97,11 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
           if (plate) plate.scrollIntoView({ behavior: "smooth" });
         }, 300);
       }
-    } catch {
-      setStoredClientUser({
-        phone: "9876543210",
-        name: "Google Account Client",
-        email: "client@gmail.com",
-        authProvider: "google",
-        isLoggedIn: true,
+    } catch (err) {
+      const error = err as Error;
+      toast.error("Google Sign-In failed", {
+        description: error?.message || "Could not complete sign in.",
       });
-      toast.success("Signed in with Google");
-      onOpenChange(false);
     } finally {
       setBusy(false);
     }

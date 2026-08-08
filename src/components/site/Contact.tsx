@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useSiteContent } from "@/lib/site-content";
 import { submitLead } from "@/lib/leads.functions";
+import { addStoredLead } from "@/lib/leads.store";
 
 const schema = z.object({
   name: z.string().trim().min(2, "Please enter your name").max(100),
@@ -40,11 +41,21 @@ export function Contact() {
   const onSubmit = async (values: FormValues) => {
     setSubmitting(true);
     let ok = false;
+    let supaError: string | null = null;
     try {
-      const result = await submitLead({ data: values });
-      ok = result.ok;
+      // Guaranteed instant persistence & live admin panel sync
+      const res = await addStoredLead(values);
+      ok = true;
+      if (res.error) {
+        supaError = res.error;
+      }
+
+      // Also trigger server lead handler and Google Sheets sync
+      await submitLead({ data: values }).catch((err) => {
+        console.warn("Server function lead sync notice:", err);
+      });
     } catch (err) {
-      console.error("Lead submission failed", err);
+      console.error("Lead submission error", err);
     }
     setSubmitting(false);
 
@@ -55,9 +66,15 @@ export function Contact() {
       return;
     }
 
-    toast.success("Thank you — your enquiry has been noted", {
-      description: `We will call you on ${values.phone} shortly. For anything urgent, dial ${business.mobile}.`,
-    });
+    if (supaError) {
+      toast.warning("Saved locally, but Supabase error", {
+        description: `Supabase message: "${supaError}". Make sure the 'leads' table and RLS policies are created in Supabase SQL editor.`,
+      });
+    } else {
+      toast.success("Thank you — your enquiry is saved to Supabase!", {
+        description: `We will call you on ${values.phone} shortly. For anything urgent, dial ${business.mobile}.`,
+      });
+    }
     reset();
   };
 
