@@ -1,6 +1,5 @@
-const SHEET_ID = "1ba-FoB8m_je1-N2G0Mj8qg275AhaWbvNeBO8U-BROXU";
+const SHEET_ID = process.env["GOOGLE_SHEET_ID"] || "1ba-FoB8m_je1-N2G0Mj8qg275AhaWbvNeBO8U-BROXU";
 const RANGE = "Sheet1!A:G";
-const GATEWAY = "https://connector-gateway.lovable.dev/google_sheets/v4";
 
 export type SheetLeadRow = {
   created_at?: string | null;
@@ -29,21 +28,18 @@ export async function appendLeadsToSheet(leads: SheetLeadRow[]): Promise<{
   ok: boolean;
   error?: string;
 }> {
-  const lovableKey = process.env["LOVABLE_API_KEY"];
   const sheetsKey = process.env["GOOGLE_SHEETS_API_KEY"];
-  if (!lovableKey || !sheetsKey) {
+  if (!sheetsKey) {
     return { ok: false, error: "Google Sheets connection is not configured." };
   }
   if (leads.length === 0) return { ok: true };
 
   try {
     const res = await fetch(
-      `${GATEWAY}/spreadsheets/${SHEET_ID}/values/${RANGE}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${RANGE}:append?valueInputOption=USER_ENTERED&key=${sheetsKey}`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${lovableKey}`,
-          "X-Connection-Api-Key": sheetsKey,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ values: leads.map(toRow) }),
