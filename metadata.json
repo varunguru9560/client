@@ -1,0 +1,6 @@
+{
+  "name": "TaxMaestro",
+  "description": "Tax and financial consulting web application with services, testimonials, FAQs, and lead management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
