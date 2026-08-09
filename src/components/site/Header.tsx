@@ -107,7 +107,7 @@ export function Header() {
                 >
                   <FolderCheck className="size-4 text-brand" />
                   <span className="max-w-[100px] truncate sm:max-w-none">
-                    {clientUser.name || clientUser.phone}
+                    {clientUser.email || clientUser.name || clientUser.phone}
                   </span>
                 </Button>
                 <Button
@@ -180,7 +180,7 @@ export function Header() {
                 {clientUser?.isLoggedIn ? (
                   <div className="mt-2 space-y-2">
                     <p className="text-sm font-medium">
-                      Logged in as: {clientUser.name || clientUser.phone}
+                      Logged in as: {clientUser.email || clientUser.name || clientUser.phone}
                     </p>
                     <div className="flex gap-2">
                       <Button

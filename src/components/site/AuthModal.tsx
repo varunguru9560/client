@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Phone, Mail, Lock, ShieldCheck, UserCheck, ArrowRight } from "lucide-react";
+import { Mail, Lock, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { setStoredClientUser, normalizePhone } from "@/lib/client-vault";
+import { setStoredClientUser } from "@/lib/client-vault";
 import { googleWorkspaceSignIn } from "@/lib/google-workspace";
 
 interface AuthModalProps {
@@ -24,57 +24,10 @@ interface AuthModalProps {
 }
 
 export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthModalProps) {
-  const [activeTab, setActiveTab] = useState<"phone" | "google" | "email">("phone");
-  const [phone, setPhone] = useState("");
-  const [name, setName] = useState("");
+  const [activeTab, setActiveTab] = useState<"google" | "email">("email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpCode, setOtpCode] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const handlePhoneSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanPhone = normalizePhone(phone);
-    if (!cleanPhone || cleanPhone.length < 10) {
-      toast.error("Please enter a valid 10-digit mobile number");
-      return;
-    }
-
-    if (!otpSent) {
-      setOtpSent(true);
-      toast.success(`Verification code sent to +91 ${cleanPhone}`, {
-        description: "For instant demo testing, enter code 123456 or click Verify.",
-      });
-      return;
-    }
-
-    // Verify OTP
-    if (otpCode && otpCode !== "123456" && otpCode.length < 4) {
-      toast.error("Invalid verification code. Use 123456 for demo.");
-      return;
-    }
-
-    setStoredClientUser({
-      phone: cleanPhone,
-      name: name.trim() || `Client (${cleanPhone})`,
-      authProvider: "phone",
-      isLoggedIn: true,
-    });
-
-    toast.success(`Welcome back, ${name.trim() || `+91 ${cleanPhone}`}!`, {
-      description: "You are now logged in. Scroll to the client document plate below.",
-    });
-
-    onOpenChange(false);
-    // Smooth scroll down to client plate section
-    setTimeout(() => {
-      const plate = document.getElementById("client-vault-plate");
-      if (plate) {
-        plate.scrollIntoView({ behavior: "smooth" });
-      }
-    }, 300);
-  };
 
   const handleGoogleAuth = async () => {
     setBusy(true);
@@ -164,12 +117,12 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
 
         <Tabs
           value={activeTab}
-          onValueChange={(v) => setActiveTab(v as "phone" | "google" | "email")}
+          onValueChange={(v) => setActiveTab(v as "google" | "email")}
           className="mt-2"
         >
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="phone" className="gap-1 text-xs">
-              <Phone className="size-3.5" /> Mobile
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="email" className="gap-1 text-xs">
+              <Mail className="size-3.5" /> Email
             </TabsTrigger>
             <TabsTrigger value="google" className="gap-1 text-xs">
               <svg className="size-3.5" viewBox="0 0 24 24">
@@ -192,84 +145,37 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
               </svg>
               Google
             </TabsTrigger>
-            <TabsTrigger value="email" className="gap-1 text-xs">
-              <Mail className="size-3.5" /> Email
-            </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="phone" className="mt-4 space-y-4">
-            <form onSubmit={handlePhoneSubmit} className="space-y-3">
+          <TabsContent value="email" className="mt-4 space-y-4">
+            <form onSubmit={handleEmailSubmit} className="space-y-3">
               <div className="space-y-1.5">
-                <Label htmlFor="client-name">Your Name (Optional)</Label>
+                <Label htmlFor="client-email">Email Address</Label>
                 <Input
-                  id="client-name"
-                  placeholder="e.g. Rahul Sharma"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  id="client-email"
+                  type="email"
+                  required
+                  placeholder="name@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="client-phone">Mobile Number *</Label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-3 flex items-center text-xs font-semibold text-muted-foreground">
-                    +91
-                  </span>
-                  <Input
-                    id="client-phone"
-                    type="tel"
-                    required
-                    placeholder="9876543210"
-                    className="pl-12 font-medium"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    disabled={otpSent}
-                  />
-                </div>
+                <Label htmlFor="client-pwd">Password</Label>
+                <Input
+                  id="client-pwd"
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
               </div>
 
-              {otpSent && (
-                <div className="space-y-1.5 rounded-xl border border-brand/30 bg-brand-soft/50 p-3">
-                  <div className="flex items-center justify-between text-xs">
-                    <Label htmlFor="otp-code" className="font-semibold text-brand">
-                      Enter 6-Digit OTP
-                    </Label>
-                    <span className="text-[0.7rem] text-muted-foreground">Demo code: 123456</span>
-                  </div>
-                  <Input
-                    id="otp-code"
-                    type="text"
-                    maxLength={6}
-                    placeholder="123456"
-                    className="tracking-widest font-mono text-center text-base"
-                    value={otpCode}
-                    onChange={(e) => setOtpCode(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-              )}
-
-              <Button type="submit" variant="cta" className="w-full gap-2">
-                {otpSent ? (
-                  <>
-                    <ShieldCheck className="size-4" /> Verify & Access Documents
-                  </>
-                ) : (
-                  <>
-                    Continue with Mobile Number <ArrowRight className="size-4" />
-                  </>
-                )}
+              <Button type="submit" variant="cta" className="w-full gap-2" disabled={busy}>
+                <UserCheck className="size-4" /> {busy ? "Please wait..." : "Sign In with Email"}
               </Button>
-
-              {otpSent && (
-                <button
-                  type="button"
-                  onClick={() => setOtpSent(false)}
-                  className="w-full text-center text-xs text-muted-foreground hover:underline"
-                >
-                  Change mobile number
-                </button>
-              )}
             </form>
           </TabsContent>
 
@@ -309,38 +215,6 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
                 {busy ? "Connecting..." : "Continue with Google"}
               </Button>
             </div>
-          </TabsContent>
-
-          <TabsContent value="email" className="mt-4 space-y-4">
-            <form onSubmit={handleEmailSubmit} className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="client-email">Email Address</Label>
-                <Input
-                  id="client-email"
-                  type="email"
-                  required
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="client-pwd">Password</Label>
-                <Input
-                  id="client-pwd"
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-
-              <Button type="submit" variant="cta" className="w-full gap-2" disabled={busy}>
-                <UserCheck className="size-4" /> {busy ? "Please wait..." : "Sign In with Email"}
-              </Button>
-            </form>
           </TabsContent>
         </Tabs>
 

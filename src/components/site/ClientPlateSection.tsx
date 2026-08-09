@@ -10,6 +10,7 @@ import {
   Trash2,
   Lock,
   Phone,
+  Mail,
   CheckCircle2,
   Sparkles,
 } from "lucide-react";
@@ -42,7 +43,7 @@ export function ClientPlateSection() {
   const [user, setUser] = useState<ClientUser | null>(null);
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [quickPhone, setQuickPhone] = useState("");
+  const [quickEmail, setQuickEmail] = useState("");
 
   // Upload Form State
   const [showUploadForm, setShowUploadForm] = useState(false);
@@ -79,18 +80,19 @@ export function ClientPlateSection() {
 
   const handleQuickLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    const norm = normalizePhone(quickPhone);
-    if (!norm || norm.length < 10) {
-      toast.error("Please enter a valid 10-digit mobile number");
+    const cleanEmail = quickEmail.trim();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      toast.error("Please enter a valid email address");
       return;
     }
     setStoredClientUser({
-      phone: norm,
-      name: `Client (${norm})`,
-      authProvider: "phone",
+      phone: "9876543210",
+      name: cleanEmail.split("@")[0] || "Client User",
+      email: cleanEmail,
+      authProvider: "email",
       isLoggedIn: true,
     });
-    toast.success(`Logged in with +91 ${norm}`);
+    toast.success(`Logged in as ${cleanEmail}`);
   };
 
   const handleClientFileUpload = async (e: React.FormEvent) => {
@@ -211,9 +213,9 @@ export function ClientPlateSection() {
                   Log in to access your tax returns, certificates & Drive links
                 </h3>
                 <p className="text-sm text-muted-foreground leading-relaxed">
-                  When you log in with your mobile number or Google account, any files or Google
-                  Drive links attached by <strong>Shweta Singh (The Tax Maestro)</strong> in your
-                  name are immediately visible here for easy 1-click download.
+                  When you log in with your email or Google account, any files or Google Drive links
+                  attached by <strong>Shweta Singh (The Tax Maestro)</strong> in your name are
+                  immediately visible here for easy 1-click download.
                 </p>
 
                 <div className="flex flex-wrap gap-4 pt-2">
@@ -250,31 +252,23 @@ export function ClientPlateSection() {
 
               <div className="rounded-2xl border border-border bg-muted/40 p-5 md:col-span-5">
                 <h4 className="text-sm font-semibold flex items-center gap-2">
-                  <Phone className="size-4 text-brand" /> Quick Mobile Access
+                  <Mail className="size-4 text-brand" /> Quick Email Access
                 </h4>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Enter your registered mobile number to check documents instantly.
+                  Enter your registered email address to check documents instantly.
                 </p>
                 <form onSubmit={handleQuickLogin} className="mt-4 space-y-3">
-                  <div className="relative">
-                    <span className="absolute inset-y-0 left-3 flex items-center text-xs font-semibold text-muted-foreground">
-                      +91
-                    </span>
-                    <Input
-                      type="tel"
-                      required
-                      placeholder="9876543210"
-                      className="pl-12 font-medium"
-                      value={quickPhone}
-                      onChange={(e) => setQuickPhone(e.target.value)}
-                    />
-                  </div>
+                  <Input
+                    type="email"
+                    required
+                    placeholder="client@example.com"
+                    className="font-medium"
+                    value={quickEmail}
+                    onChange={(e) => setQuickEmail(e.target.value)}
+                  />
                   <Button type="submit" variant="brand" className="w-full text-xs font-semibold">
                     Access My Documents
                   </Button>
-                  <p className="text-[0.7rem] text-center text-muted-foreground">
-                    Try demo number: <strong>9876543210</strong>
-                  </p>
                 </form>
               </div>
             </div>
