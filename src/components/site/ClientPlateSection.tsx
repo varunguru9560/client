@@ -33,6 +33,8 @@ import {
   getDocumentsForClient,
   addClientDocument,
   deleteClientDocument,
+  fetchSupabaseClientDocuments,
+  uploadFileToSupabaseStorage,
   normalizePhone,
   ClientDocument,
   ClientUser,
@@ -68,11 +70,21 @@ export function ClientPlateSection() {
 
   useEffect(() => {
     reload();
+
+    // Fetch initial docs from Supabase
+    fetchSupabaseClientDocuments().then(() => reload());
+
+    // Auto sync from Supabase every 6 seconds
+    const interval = setInterval(() => {
+      fetchSupabaseClientDocuments().then(() => reload());
+    }, 6000);
+
     const handleAuthChange = () => reload();
     const handleDocsChange = () => reload();
     window.addEventListener("client-auth-changed", handleAuthChange);
     window.addEventListener("client-docs-changed", handleDocsChange);
     return () => {
+      clearInterval(interval);
       window.removeEventListener("client-auth-changed", handleAuthChange);
       window.removeEventListener("client-docs-changed", handleDocsChange);
     };
@@ -86,7 +98,7 @@ export function ClientPlateSection() {
       return;
     }
     setStoredClientUser({
-      phone: "9876543210",
+      phone: "",
       name: cleanEmail.split("@")[0] || "Client User",
       email: cleanEmail,
       authProvider: "email",
@@ -112,21 +124,29 @@ export function ClientPlateSection() {
     if (selectedFile) {
       fileName = selectedFile.name;
       fileSize = `${(selectedFile.size / 1024).toFixed(0)} KB`;
-      fileDataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(selectedFile);
-      });
+
+      // Try Supabase Storage upload first
+      const supabasePublicUrl = await uploadFileToSupabaseStorage(selectedFile, "client-uploads");
+      if (supabasePublicUrl) {
+        fileDataUrl = supabasePublicUrl;
+      } else {
+        // Fallback to Data URL
+        fileDataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(selectedFile);
+        });
+      }
     }
 
-    addClientDocument({
-      clientPhone: user.phone || "9876543210",
+    await addClientDocument({
+      clientPhone: user.phone || "",
       clientName: user.name || "Client",
       clientEmail: user.email,
       title: uploadTitle.trim(),
       category: uploadCategory,
       uploadedBy: "client",
-      uploaderName: user.name || user.phone || "Client",
+      uploaderName: user.name || user.email || "Client",
       fileUrl: fileDataUrl,
       driveUrl: uploadDriveUrl.trim(),
       fileName,
@@ -148,8 +168,8 @@ export function ClientPlateSection() {
     reload();
   };
 
-  const handleDelete = (id: string) => {
-    deleteClientDocument(id);
+  const handleDelete = async (id: string) => {
+    await deleteClientDocument(id);
     toast.success("Document removed");
     reload();
   };
@@ -188,7 +208,9 @@ export function ClientPlateSection() {
               <div className="flex items-center gap-3">
                 <div className="text-right">
                   <p className="text-xs font-semibold text-foreground">{user.name || "Client"}</p>
-                  <p className="text-xs text-muted-foreground">+91 {user.phone}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {user.email || (user.phone ? `+91 ${user.phone}` : "Client Portal")}
+                  </p>
                 </div>
                 <Button
                   variant="outline"
@@ -283,7 +305,7 @@ export function ClientPlateSection() {
                     </h3>
                     <p className="text-xs text-muted-foreground">
                       Tax filings, GST certificates, notices, and Drive links uploaded specifically
-                      for +91 {user.phone}
+                      for {user.email || user.name || "your account"}
                     </p>
                   </div>
                   <Badge variant="outline" className="font-mono text-xs">
@@ -298,8 +320,8 @@ export function ClientPlateSection() {
                       No documents attached yet
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground max-w-md mx-auto">
-                      Any documents or Google Drive links added by the owner/admin under your mobile
-                      number (+91 {user.phone}) will automatically appear here.
+                      Any documents or Google Drive links added by the owner/admin for your account
+                      ({user.email || user.name || "Client Portal"}) will automatically appear here.
                     </p>
                   </div>
                 ) : (

@@ -188,8 +188,8 @@ export function GoogleWorkspacePanel() {
   const handleAttachToClientVault = (file: DriveFileItem) => {
     const link = file.webViewLink || `https://drive.google.com/file/d/${file.id}/view`;
     addClientDocument({
-      clientPhone: "9876543210",
-      clientName: "Rahul Sharma",
+      clientPhone: "",
+      clientName: user?.displayName || user?.email?.split("@")[0] || "Client User",
       clientEmail: user?.email || "client@example.com",
       title: file.name,
       category: file.name.toLowerCase().includes("itr")

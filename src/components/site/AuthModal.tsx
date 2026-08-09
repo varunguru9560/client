@@ -35,7 +35,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
       const res = await googleWorkspaceSignIn();
       if (res) {
         setStoredClientUser({
-          phone: "9876543210",
+          phone: "",
           name: res.user.displayName || "Google Client",
           email: res.user.email || "client@gmail.com",
           authProvider: "google",
@@ -69,7 +69,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
     if (error) {
       // Allow fallback client session with provided email
       setStoredClientUser({
-        phone: "9876543210",
+        phone: "",
         name: email.split("@")[0] || "Client User",
         email,
         authProvider: "email",
@@ -87,7 +87,7 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
     }
 
     setStoredClientUser({
-      phone: "9876543210",
+      phone: "",
       name: email.split("@")[0] || "Client User",
       email,
       authProvider: "email",

@@ -48,54 +48,8 @@ if (typeof window !== "undefined" && "BroadcastChannel" in window) {
   }
 }
 
-// Initial sample documents for demo client 9876543210 or general testing
-const initialDocuments: ClientDocument[] = [
-  {
-    id: "doc-demo-1",
-    clientPhone: "9876543210",
-    clientName: "Rahul Sharma",
-    clientEmail: "rahul.sharma@example.com",
-    title: "AY 2025-26 Income Tax Return Acknowledgment (Form ITR-V)",
-    category: "ITR Return",
-    uploadedBy: "consultant",
-    uploaderName: "Shweta Singh (The Tax Maestro)",
-    driveUrl: "https://drive.google.com/file/d/1A2B3C4D5E6F7G8H9I0J/view?usp=sharing",
-    fileName: "ITR_V_AY2025-26_Rahul_Sharma.pdf",
-    fileSize: "245 KB",
-    notes: "Your Income Tax Return for AY 2025-26 has been successfully verified and filed.",
-    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-  },
-  {
-    id: "doc-demo-2",
-    clientPhone: "9876543210",
-    clientName: "Rahul Sharma",
-    clientEmail: "rahul.sharma@example.com",
-    title: "GST Registration Certificate (Form REG-06)",
-    category: "GST Certificate",
-    uploadedBy: "consultant",
-    uploaderName: "Shweta Singh (The Tax Maestro)",
-    driveUrl: "https://drive.google.com/drive/folders/1GST_Certificates_TaxMaestro",
-    fileName: "GSTIN_07FSDPS115291Z8_Certificate.pdf",
-    fileSize: "1.2 MB",
-    notes: "Official GSTIN Certificate issued by Central GST Department.",
-    createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-  },
-  {
-    id: "doc-demo-3",
-    clientPhone: "9876543210",
-    clientName: "Rahul Sharma",
-    clientEmail: "rahul.sharma@example.com",
-    title: "Bank Statement FY 2024-25 (Uploaded by Client)",
-    category: "Financial Statements",
-    uploadedBy: "client",
-    uploaderName: "Rahul Sharma",
-    driveUrl: "",
-    fileName: "HDFC_Bank_Statement_FY24-25.pdf",
-    fileSize: "890 KB",
-    notes: "Bank statement for audit & computation verification.",
-    createdAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-  },
-];
+// Clean initial state with NO fake or demo documents
+const initialDocuments: ClientDocument[] = [];
 
 export function normalizePhone(phone: string): string {
   if (!phone) return "";
@@ -132,10 +86,15 @@ export function getAllClientDocuments(): ClientDocument[] {
   try {
     const raw = localStorage.getItem(STORAGE_DOCS_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_DOCS_KEY, JSON.stringify(initialDocuments));
       return initialDocuments;
     }
-    return JSON.parse(raw) as ClientDocument[];
+    const parsed = JSON.parse(raw) as ClientDocument[];
+    // Filter out old demo/fake documents
+    const cleaned = parsed.filter((d) => !d.id.startsWith("doc-demo-"));
+    if (cleaned.length !== parsed.length) {
+      localStorage.setItem(STORAGE_DOCS_KEY, JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch {
     return initialDocuments;
   }
@@ -181,20 +140,154 @@ export function getDocumentsForClient(
   });
 }
 
-export function addClientDocument(doc: Omit<ClientDocument, "id" | "createdAt">): ClientDocument {
+/**
+ * Fetch all documents from Supabase database and merge with local documents.
+ */
+export async function fetchSupabaseClientDocuments(): Promise<ClientDocument[]> {
+  try {
+    const { data: leadsDocs, error } = await supabase
+      .from("leads")
+      .select("*")
+      .eq("status", "document")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.warn("[Supabase Docs Fetch Warning]:", error.message);
+      return getAllClientDocuments();
+    }
+
+    if (!leadsDocs || leadsDocs.length === 0) {
+      return getAllClientDocuments();
+    }
+
+    const remoteDocs: ClientDocument[] = [];
+    leadsDocs.forEach((row) => {
+      if (row.message) {
+        try {
+          const parsed = JSON.parse(row.message) as ClientDocument;
+          if (parsed && parsed.id && parsed.title) {
+            remoteDocs.push(parsed);
+          }
+        } catch {
+          remoteDocs.push({
+            id: String(row.id),
+            clientPhone: row.phone || "",
+            clientName: row.name || "Client",
+            clientEmail: row.email || undefined,
+            title: row.service || "Uploaded Document",
+            category: "Other",
+            uploadedBy: "client",
+            uploaderName: row.name || "Client",
+            notes: row.message || undefined,
+            createdAt: row.created_at || new Date().toISOString(),
+          });
+        }
+      }
+    });
+
+    // Merge remote with local store
+    const local = getAllClientDocuments();
+    const mergedMap = new Map<string, ClientDocument>();
+
+    local.forEach((doc) => mergedMap.set(doc.id, doc));
+    remoteDocs.forEach((doc) => mergedMap.set(doc.id, doc));
+
+    const merged = Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    saveClientDocuments(merged);
+    return merged;
+  } catch (err) {
+    console.warn("Exception fetching Supabase documents:", err);
+    return getAllClientDocuments();
+  }
+}
+
+/**
+ * Add a document locally AND push it to Supabase database.
+ */
+export async function addClientDocument(
+  doc: Omit<ClientDocument, "id" | "createdAt">,
+): Promise<ClientDocument> {
   const newDoc: ClientDocument = {
     ...doc,
     id: "doc-" + Date.now() + "-" + Math.random().toString(36).substring(2, 7),
     createdAt: new Date().toISOString(),
   };
+
   const current = getAllClientDocuments();
   const updated = [newDoc, ...current];
   saveClientDocuments(updated);
+
+  // Sync with Supabase
+  try {
+    const { error } = await supabase.from("leads").insert({
+      name: newDoc.clientName,
+      phone: newDoc.clientPhone,
+      email: newDoc.clientEmail || null,
+      service: `DOC::${newDoc.category}::${newDoc.uploadedBy}`,
+      message: JSON.stringify(newDoc),
+      status: "document",
+    });
+
+    if (error) {
+      console.warn("[Supabase Document Insert Warning]:", error.message);
+    } else {
+      console.log("[Supabase Document Insert Success]");
+    }
+  } catch (err) {
+    console.warn("[Supabase Document Exception]:", err);
+  }
+
   return newDoc;
 }
 
-export function deleteClientDocument(id: string): void {
+/**
+ * Upload a binary file directly to Supabase Storage bucket `client-documents`.
+ * Falls back gracefully if bucket does not exist or upload fails.
+ */
+export async function uploadFileToSupabaseStorage(
+  file: File,
+  folderPath = "client-uploads",
+): Promise<string | null> {
+  try {
+    const fileExt = file.name.split(".").pop();
+    const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+    const filePath = `${folderPath}/${fileName}`;
+
+    const { data, error } = await supabase.storage.from("client-documents").upload(filePath, file, {
+      cacheControl: "3600",
+      upsert: true,
+    });
+
+    if (error) {
+      console.warn("[Supabase Storage Upload Warning]:", error.message);
+      return null;
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from("client-documents")
+      .getPublicUrl(data.path);
+
+    return publicUrlData.publicUrl || null;
+  } catch (err) {
+    console.warn("Exception uploading to Supabase Storage:", err);
+    return null;
+  }
+}
+
+/**
+ * Delete a document locally AND from Supabase.
+ */
+export async function deleteClientDocument(id: string): Promise<void> {
   const current = getAllClientDocuments();
   const updated = current.filter((d) => d.id !== id);
   saveClientDocuments(updated);
+
+  try {
+    await supabase.from("leads").delete().eq("status", "document").filter("message", "cs", id);
+  } catch {
+    // Ignore deletion errors on remote
+  }
 }

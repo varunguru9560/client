@@ -29,6 +29,8 @@ import {
   getAllClientDocuments,
   addClientDocument,
   deleteClientDocument,
+  fetchSupabaseClientDocuments,
+  uploadFileToSupabaseStorage,
   normalizePhone,
   ClientDocument,
 } from "@/lib/client-vault";
@@ -61,6 +63,14 @@ export function ClientDocumentsPanel() {
   useEffect(() => {
     reload();
 
+    // Fetch initial docs from Supabase
+    fetchSupabaseClientDocuments().then(() => reload());
+
+    // Auto sync from Supabase every 6 seconds
+    const interval = setInterval(() => {
+      fetchSupabaseClientDocuments().then(() => reload());
+    }, 6000);
+
     const loadLeads = () => {
       const stored = getStoredLeads();
       setLeadsList(stored.map((l) => ({ name: l.name, phone: l.phone, email: l.email })));
@@ -73,6 +83,7 @@ export function ClientDocumentsPanel() {
     window.addEventListener("client-docs-changed", handleDocsChange);
     window.addEventListener("leads-changed", handleLeadsChange);
     return () => {
+      clearInterval(interval);
       window.removeEventListener("client-docs-changed", handleDocsChange);
       window.removeEventListener("leads-changed", handleLeadsChange);
     };
@@ -108,14 +119,22 @@ export function ClientDocumentsPanel() {
     if (file) {
       fileName = file.name;
       fileSize = `${(file.size / 1024).toFixed(0)} KB`;
-      fileDataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      });
+
+      // Try Supabase Storage upload first
+      const supabasePublicUrl = await uploadFileToSupabaseStorage(file, "admin-uploads");
+      if (supabasePublicUrl) {
+        fileDataUrl = supabasePublicUrl;
+      } else {
+        // Fallback to Data URL
+        fileDataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+      }
     }
 
-    addClientDocument({
+    await addClientDocument({
       clientPhone: cleanPhone,
       clientName: clientName.trim() || `Client (${cleanPhone})`,
       clientEmail: clientEmail.trim(),
@@ -144,8 +163,8 @@ export function ClientDocumentsPanel() {
     reload();
   };
 
-  const handleDelete = (id: string) => {
-    deleteClientDocument(id);
+  const handleDelete = async (id: string) => {
+    await deleteClientDocument(id);
     toast.success("Document deleted");
     reload();
   };
@@ -272,7 +291,7 @@ export function ClientDocumentsPanel() {
                 <Input
                   id="admin-phone"
                   required
-                  placeholder="9876543210"
+                  placeholder="Enter 10-digit mobile"
                   className="pl-12 font-medium"
                   value={clientPhone}
                   onChange={(e) => setClientPhone(e.target.value)}
@@ -285,7 +304,7 @@ export function ClientDocumentsPanel() {
               <Input
                 id="admin-name"
                 required
-                placeholder="Rahul Sharma"
+                placeholder="Enter Client Name"
                 value={clientName}
                 onChange={(e) => setClientName(e.target.value)}
               />
@@ -460,9 +479,11 @@ export function ClientDocumentsPanel() {
                         </Badge>
                       </div>
                       <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <Phone className="size-3 text-brand" /> +91 {pool.clientPhone}
-                        </span>
+                        {pool.clientPhone && (
+                          <span className="flex items-center gap-1">
+                            <Phone className="size-3 text-brand" /> +91 {pool.clientPhone}
+                          </span>
+                        )}
                         {pool.clientEmail && <span>• {pool.clientEmail}</span>}
                       </div>
                     </div>

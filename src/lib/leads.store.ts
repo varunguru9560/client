@@ -13,38 +13,7 @@ export interface LeadItem {
 
 const STORAGE_LEADS_KEY = "tax_maestro_leads_v1";
 
-const initialLeads: LeadItem[] = [
-  {
-    id: "lead-demo-1",
-    name: "Rahul Sharma",
-    phone: "9876543210",
-    email: "rahul.sharma@example.com",
-    service: "ITR Filing & Tax Planning",
-    message: "Need help filing ITR-3 for FY 2024-25 with capital gains from stock trading.",
-    status: "new",
-    created_at: new Date(Date.now() - 3600000 * 4).toISOString(),
-  },
-  {
-    id: "lead-demo-2",
-    name: "Ankit Verma",
-    phone: "9812345678",
-    email: "ankit.v@gmail.com",
-    service: "GST Registration & Compliance",
-    message: "New private limited firm needing GST registration and monthly GSTR-1 & 3B filing.",
-    status: "contacted",
-    created_at: new Date(Date.now() - 86400000 * 1).toISOString(),
-  },
-  {
-    id: "lead-demo-3",
-    name: "Priya Mehta",
-    phone: "9955443322",
-    email: "priya.mehta@yahoo.com",
-    service: "Tax Notice & Assessment Reply",
-    message: "Received Income Tax notice under Section 143(1) regarding AIS mismatch.",
-    status: "converted",
-    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-];
+const initialLeads: LeadItem[] = [];
 
 export function getStoredLeads(): LeadItem[] {
   if (typeof window === "undefined") return initialLeads;
@@ -54,7 +23,12 @@ export function getStoredLeads(): LeadItem[] {
       localStorage.setItem(STORAGE_LEADS_KEY, JSON.stringify(initialLeads));
       return initialLeads;
     }
-    return JSON.parse(raw) as LeadItem[];
+    const parsed = JSON.parse(raw) as LeadItem[];
+    const cleaned = parsed.filter((l) => !l.id.startsWith("lead-demo-"));
+    if (cleaned.length !== parsed.length) {
+      localStorage.setItem(STORAGE_LEADS_KEY, JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch {
     return initialLeads;
   }
