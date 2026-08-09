@@ -2,7 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 
 export interface ClientDocument {
   id: string;
-  clientPhone: string; // e.g. "7529993681" or "9876543210"
+  clientPhone: string; // e.g. "9876543210"
   clientName: string;
   clientEmail?: string;
   title: string;
@@ -34,6 +34,19 @@ export interface ClientUser {
 
 const STORAGE_DOCS_KEY = "tax_maestro_client_documents_v1";
 const STORAGE_USER_KEY = "tax_maestro_logged_client_v1";
+
+// BroadcastChannel for instant cross-tab & cross-window updates
+let docsChannel: BroadcastChannel | null = null;
+if (typeof window !== "undefined" && "BroadcastChannel" in window) {
+  try {
+    docsChannel = new BroadcastChannel("tax_maestro_client_docs_channel");
+    docsChannel.onmessage = () => {
+      window.dispatchEvent(new Event("client-docs-changed"));
+    };
+  } catch {
+    // Fallback if BroadcastChannel fails
+  }
+}
 
 // Initial sample documents for demo client 9876543210 or general testing
 const initialDocuments: ClientDocument[] = [
@@ -87,7 +100,6 @@ const initialDocuments: ClientDocument[] = [
 export function normalizePhone(phone: string): string {
   if (!phone) return "";
   const digits = phone.replace(/\D/g, "");
-  // Return last 10 digits if available
   if (digits.length >= 10) {
     return digits.slice(-10);
   }
@@ -133,20 +145,38 @@ export function saveClientDocuments(docs: ClientDocument[]): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(STORAGE_DOCS_KEY, JSON.stringify(docs));
   window.dispatchEvent(new Event("client-docs-changed"));
+  if (docsChannel) {
+    docsChannel.postMessage({ type: "DOCS_UPDATED" });
+  }
 }
 
-export function getDocumentsForClient(phoneOrEmail: string): ClientDocument[] {
-  const norm = normalizePhone(phoneOrEmail);
+export function getDocumentsForClient(
+  target: string | { phone?: string; email?: string; name?: string } | null,
+): ClientDocument[] {
+  if (!target) return [];
   const all = getAllClientDocuments();
-  if (!norm && !phoneOrEmail) return [];
+
+  let queryPhone = "";
+  let queryEmail = "";
+
+  if (typeof target === "string") {
+    if (target.includes("@")) {
+      queryEmail = target.toLowerCase().trim();
+    } else {
+      queryPhone = normalizePhone(target);
+    }
+  } else {
+    if (target.phone) queryPhone = normalizePhone(target.phone);
+    if (target.email) queryEmail = target.email.toLowerCase().trim();
+  }
 
   return all.filter((doc) => {
-    const docNorm = normalizePhone(doc.clientPhone);
-    const matchesPhone = norm && docNorm === norm;
-    const matchesEmail =
-      doc.clientEmail &&
-      phoneOrEmail.includes("@") &&
-      doc.clientEmail.toLowerCase() === phoneOrEmail.toLowerCase();
+    const docNormPhone = normalizePhone(doc.clientPhone);
+    const docEmail = doc.clientEmail ? doc.clientEmail.toLowerCase().trim() : "";
+
+    const matchesPhone = Boolean(queryPhone && docNormPhone && docNormPhone === queryPhone);
+    const matchesEmail = Boolean(queryEmail && docEmail && docEmail === queryEmail);
+
     return matchesPhone || matchesEmail;
   });
 }

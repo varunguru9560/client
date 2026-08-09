@@ -150,17 +150,64 @@ export function ClientDocumentsPanel() {
     reload();
   };
 
-  const filteredDocs = documents.filter((doc) => {
-    const query = searchQuery.toLowerCase();
-    const matchesQuery =
-      doc.title.toLowerCase().includes(query) ||
-      doc.clientName.toLowerCase().includes(query) ||
-      doc.clientPhone.includes(query) ||
-      (doc.clientEmail && doc.clientEmail.toLowerCase().includes(query));
+  // Group documents into distinct Client Pools
+  const clientPoolsMap = new Map<
+    string,
+    {
+      key: string;
+      clientName: string;
+      clientPhone: string;
+      clientEmail?: string;
+      clientUploadedDocs: ClientDocument[];
+      consultantUploadedDocs: ClientDocument[];
+    }
+  >();
 
-    const matchesCategory = filterCategory === "all" || doc.category === filterCategory;
-    return matchesQuery && matchesCategory;
+  // 1. Populate from documents
+  documents.forEach((doc) => {
+    const key = normalizePhone(doc.clientPhone) || doc.clientEmail || doc.clientName;
+    if (!clientPoolsMap.has(key)) {
+      clientPoolsMap.set(key, {
+        key,
+        clientName: doc.clientName,
+        clientPhone: doc.clientPhone,
+        clientEmail: doc.clientEmail,
+        clientUploadedDocs: [],
+        consultantUploadedDocs: [],
+      });
+    }
+    const pool = clientPoolsMap.get(key)!;
+    if (doc.uploadedBy === "client") {
+      pool.clientUploadedDocs.push(doc);
+    } else {
+      pool.consultantUploadedDocs.push(doc);
+    }
   });
+
+  // 2. Also populate from leads list if missing
+  leadsList.forEach((lead) => {
+    const key = normalizePhone(lead.phone) || lead.email || lead.name;
+    if (!clientPoolsMap.has(key)) {
+      clientPoolsMap.set(key, {
+        key,
+        clientName: lead.name,
+        clientPhone: lead.phone,
+        clientEmail: lead.email,
+        clientUploadedDocs: [],
+        consultantUploadedDocs: [],
+      });
+    }
+  });
+
+  const clientPools = Array.from(clientPoolsMap.values());
+
+  const handleOpenUploadForPool = (pool: { name: string; phone: string; email?: string }) => {
+    setClientName(pool.name);
+    setClientPhone(pool.phone);
+    setClientEmail(pool.email || "");
+    setShowAddModal(true);
+    window.scrollTo({ top: 100, behavior: "smooth" });
+  };
 
   return (
     <div className="space-y-6">
@@ -367,105 +414,289 @@ export function ClientDocumentsPanel() {
         </Select>
       </div>
 
-      {/* Document List */}
-      <div className="space-y-4">
-        {filteredDocs.length === 0 ? (
+      {/* Client Pools Section */}
+      <div className="space-y-8">
+        {clientPools.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border p-8 text-center text-muted-foreground">
-            No client documents found matching your filter.
+            No client pools found matching your filter.
           </div>
         ) : (
-          filteredDocs.map((doc) => (
-            <article
-              key={doc.id}
-              className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-3"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="bg-brand-soft text-brand font-semibold">
-                      {doc.category}
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className={
-                        doc.uploadedBy === "consultant"
-                          ? "border-emerald-500/30 text-emerald-600 bg-emerald-50 text-[0.7rem]"
-                          : "border-blue-500/30 text-blue-600 bg-blue-50 text-[0.7rem]"
-                      }
-                    >
-                      {doc.uploadedBy === "consultant"
-                        ? "Uploaded by Consultant"
-                        : "Uploaded by Client"}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(doc.createdAt).toLocaleString()}
-                    </span>
+          clientPools
+            .filter((pool) => {
+              if (!searchQuery) return true;
+              const q = searchQuery.toLowerCase();
+              const matchName = pool.clientName.toLowerCase().includes(q);
+              const matchPhone = pool.clientPhone.includes(q);
+              const matchEmail = pool.clientEmail?.toLowerCase().includes(q);
+              const matchDoc = [...pool.clientUploadedDocs, ...pool.consultantUploadedDocs].some(
+                (d) => d.title.toLowerCase().includes(q),
+              );
+              return matchName || matchPhone || matchEmail || matchDoc;
+            })
+            .map((pool) => {
+              const clientDocsFiltered = pool.clientUploadedDocs.filter(
+                (d) => filterCategory === "all" || d.category === filterCategory,
+              );
+              const consultantDocsFiltered = pool.consultantUploadedDocs.filter(
+                (d) => filterCategory === "all" || d.category === filterCategory,
+              );
+
+              return (
+                <div
+                  key={pool.key}
+                  className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden"
+                >
+                  {/* Client Pool Header */}
+                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border bg-muted/30 p-5">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <User className="size-5 text-brand" />
+                        <h3 className="text-base font-bold text-foreground">{pool.clientName}</h3>
+                        <Badge
+                          variant="secondary"
+                          className="bg-brand-soft text-brand font-semibold text-xs"
+                        >
+                          Client Pool
+                        </Badge>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Phone className="size-3 text-brand" /> +91 {pool.clientPhone}
+                        </span>
+                        {pool.clientEmail && <span>• {pool.clientEmail}</span>}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className="text-xs bg-blue-50 text-blue-700 border-blue-300"
+                      >
+                        📥 {pool.clientUploadedDocs.length} Client Upload(s)
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="text-xs bg-emerald-50 text-emerald-700 border-emerald-300"
+                      >
+                        📤 {pool.consultantUploadedDocs.length} Consultant File(s)
+                      </Badge>
+                      <Button
+                        size="sm"
+                        variant="cta"
+                        onClick={() =>
+                          handleOpenUploadForPool({
+                            name: pool.clientName,
+                            phone: pool.clientPhone,
+                            email: pool.clientEmail,
+                          })
+                        }
+                        className="text-xs gap-1"
+                      >
+                        <Plus className="size-3.5" /> Upload File for{" "}
+                        {pool.clientName.split(" ")[0]}
+                      </Button>
+                    </div>
                   </div>
-                  <h3 className="font-bold text-base text-foreground">{doc.title}</h3>
+
+                  {/* Two Separate Columns for this Client Pool */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-border p-5 gap-6">
+                    {/* COLUMN 1: CLIENT UPLOADS POOL */}
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between pb-2 border-b border-border/60">
+                        <h4 className="text-sm font-bold text-blue-900 dark:text-blue-300 flex items-center gap-2">
+                          <Upload className="size-4 text-blue-600" /> 📥 Documents Received from
+                          Client
+                        </h4>
+                        <span className="text-xs text-muted-foreground font-mono">
+                          {clientDocsFiltered.length} item(s)
+                        </span>
+                      </div>
+
+                      {clientDocsFiltered.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-border/80 p-6 text-center text-xs text-muted-foreground">
+                          No documents submitted by {pool.clientName} yet.
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {clientDocsFiltered.map((doc) => (
+                            <div
+                              key={doc.id}
+                              className="rounded-xl border border-blue-200/60 bg-blue-50/30 p-4 space-y-3 dark:bg-blue-950/20"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <Badge
+                                      variant="secondary"
+                                      className="bg-blue-100 text-blue-800 text-[0.65rem] font-semibold"
+                                    >
+                                      {doc.category}
+                                    </Badge>
+                                    <span className="text-[0.7rem] text-muted-foreground">
+                                      {new Date(doc.createdAt).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                  <h5 className="font-semibold text-sm leading-snug">
+                                    {doc.title}
+                                  </h5>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDelete(doc.id)}
+                                  className="text-destructive size-7 shrink-0"
+                                  title="Delete Document"
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </Button>
+                              </div>
+
+                              {doc.notes && (
+                                <p className="text-xs text-muted-foreground bg-background/80 p-2 rounded border border-border/50">
+                                  <strong>Client Note:</strong> {doc.notes}
+                                </p>
+                              )}
+
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-blue-200/40">
+                                {doc.driveUrl ? (
+                                  <a
+                                    href={doc.driveUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline"
+                                  >
+                                    <ExternalLink className="size-3" /> Drive Link
+                                  </a>
+                                ) : (
+                                  <span className="text-[0.7rem] text-muted-foreground">
+                                    {doc.fileName ? `File: ${doc.fileName}` : "Direct Upload"}
+                                  </span>
+                                )}
+
+                                {doc.fileUrl ? (
+                                  <a
+                                    href={doc.fileUrl}
+                                    download={doc.fileName || `${doc.title}.pdf`}
+                                    className="inline-flex items-center gap-1 text-xs font-semibold text-white bg-brand hover:bg-brand-deep px-2.5 py-1 rounded-md transition-colors"
+                                  >
+                                    <Download className="size-3" /> Download (
+                                    {doc.fileSize || "File"})
+                                  </a>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* COLUMN 2: CONSULTANT SHARED POOL */}
+                    <div className="space-y-4 pt-6 lg:pt-0">
+                      <div className="flex items-center justify-between pb-2 border-b border-border/60">
+                        <h4 className="text-sm font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-2">
+                          <FileText className="size-4 text-emerald-600" /> 📤 Documents Shared with
+                          Client
+                        </h4>
+                        <span className="text-xs text-muted-foreground font-mono">
+                          {consultantDocsFiltered.length} item(s)
+                        </span>
+                      </div>
+
+                      {consultantDocsFiltered.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-border/80 p-6 text-center text-xs text-muted-foreground space-y-2">
+                          <p>No documents uploaded for this client yet.</p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              handleOpenUploadForPool({
+                                name: pool.clientName,
+                                phone: pool.clientPhone,
+                                email: pool.clientEmail,
+                              })
+                            }
+                            className="text-xs gap-1"
+                          >
+                            <Plus className="size-3" /> Upload Return / Certificate
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {consultantDocsFiltered.map((doc) => (
+                            <div
+                              key={doc.id}
+                              className="rounded-xl border border-emerald-200/60 bg-emerald-50/30 p-4 space-y-3 dark:bg-emerald-950/20"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <Badge
+                                      variant="secondary"
+                                      className="bg-emerald-100 text-emerald-800 text-[0.65rem] font-semibold"
+                                    >
+                                      {doc.category}
+                                    </Badge>
+                                    <span className="text-[0.7rem] text-muted-foreground">
+                                      {new Date(doc.createdAt).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                  <h5 className="font-semibold text-sm leading-snug">
+                                    {doc.title}
+                                  </h5>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDelete(doc.id)}
+                                  className="text-destructive size-7 shrink-0"
+                                  title="Delete Document"
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </Button>
+                              </div>
+
+                              {doc.notes && (
+                                <p className="text-xs text-muted-foreground bg-background/80 p-2 rounded border border-border/50">
+                                  <strong>Filing Remarks:</strong> {doc.notes}
+                                </p>
+                              )}
+
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-emerald-200/40">
+                                {doc.driveUrl ? (
+                                  <a
+                                    href={doc.driveUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline"
+                                  >
+                                    <ExternalLink className="size-3" /> Google Drive Link
+                                  </a>
+                                ) : (
+                                  <span className="text-[0.7rem] text-emerald-700 font-medium">
+                                    ✓ Live on Client Portal
+                                  </span>
+                                )}
+
+                                {doc.fileUrl ? (
+                                  <a
+                                    href={doc.fileUrl}
+                                    download={doc.fileName || `${doc.title}.pdf`}
+                                    className="inline-flex items-center gap-1 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 px-2.5 py-1 rounded-md transition-colors"
+                                  >
+                                    <Download className="size-3" /> Download (
+                                    {doc.fileSize || "PDF"})
+                                  </a>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDelete(doc.id)}
-                    className="text-destructive"
-                  >
-                    <Trash2 className="size-4" /> Delete
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid gap-2 text-xs sm:grid-cols-2 text-muted-foreground">
-                <div className="flex items-center gap-1.5 font-medium text-foreground">
-                  <User className="size-3.5 text-brand" /> {doc.clientName}
-                </div>
-                <div className="flex items-center gap-1.5 font-medium text-foreground">
-                  <Phone className="size-3.5 text-brand" /> +91 {doc.clientPhone}
-                </div>
-              </div>
-
-              {doc.notes && (
-                <p className="text-xs text-muted-foreground bg-muted/40 p-2.5 rounded-lg border border-border/50">
-                  <strong>Notes:</strong> {doc.notes}
-                </p>
-              )}
-
-              <div className="flex flex-wrap items-center gap-3 pt-2">
-                {doc.driveUrl && (
-                  <a
-                    href={doc.driveUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand hover:underline bg-brand-soft px-3 py-1.5 rounded-lg"
-                  >
-                    <ExternalLink className="size-3.5" /> Open Google Drive Link
-                  </a>
-                )}
-
-                {doc.fileUrl ? (
-                  <a
-                    href={doc.fileUrl}
-                    download={doc.fileName || `${doc.title}.pdf`}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-brand hover:bg-brand-deep px-3 py-1.5 rounded-lg transition-colors"
-                  >
-                    <Download className="size-3.5" /> Download File ({doc.fileSize || "Attachment"})
-                  </a>
-                ) : (
-                  !doc.driveUrl && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => toast.info("No attachment file uploaded")}
-                      className="text-xs gap-1"
-                    >
-                      <Download className="size-3.5" /> No File
-                    </Button>
-                  )
-                )}
-              </div>
-            </article>
-          ))
+              );
+            })
         )}
       </div>
     </div>
