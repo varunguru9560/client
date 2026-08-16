@@ -1,12 +1,23 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  orderBy,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { faqs as defaultFaqs } from "@/data/site";
 
 type Row = {
   id: string;
@@ -23,9 +34,44 @@ export function FaqsPanel() {
   const { data, isLoading } = useQuery({
     queryKey: ["admin", "faqs"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("faqs").select("*").order("sort_order");
-      if (error) throw error;
-      return data as Row[];
+      const colRef = collection(db, "faqs");
+      const q = query(colRef, orderBy("sort_order", "asc"));
+      const snapshot = await getDocs(q);
+
+      if (snapshot.empty) {
+        // Seed default FAQs if Firestore is empty
+        const initialList: Row[] = [];
+        for (let i = 0; i < defaultFaqs.length; i++) {
+          const f = defaultFaqs[i];
+          const newDoc: Row = {
+            id: `faq-${i + 1}`,
+            question: f.q,
+            answer: f.a,
+            sort_order: i + 1,
+            is_active: true,
+          };
+          initialList.push(newDoc);
+          try {
+            await setDoc(doc(db, "faqs", newDoc.id), newDoc);
+          } catch {
+            // ignore
+          }
+        }
+        return initialList;
+      }
+
+      const list: Row[] = [];
+      snapshot.forEach((d) => {
+        const item = d.data();
+        list.push({
+          id: d.id,
+          question: item.question || "",
+          answer: item.answer || "",
+          sort_order: Number(item.sort_order ?? 1),
+          is_active: Boolean(item.is_active ?? true),
+        });
+      });
+      return list;
     },
   });
 
@@ -37,19 +83,16 @@ export function FaqsPanel() {
   const save = useMutation({
     mutationFn: async (row: Row) => {
       const patch = draft[row.id] ?? {};
-      const { error } = await supabase
-        .from("faqs")
-        .update({
-          question: patch.question ?? row.question,
-          answer: patch.answer ?? row.answer,
-          sort_order: patch.sort_order ?? row.sort_order,
-          is_active: patch.is_active ?? row.is_active,
-        })
-        .eq("id", row.id);
-      if (error) throw error;
+      const docRef = doc(db, "faqs", row.id);
+      await updateDoc(docRef, {
+        question: patch.question ?? row.question,
+        answer: patch.answer ?? row.answer,
+        sort_order: patch.sort_order ?? row.sort_order,
+        is_active: patch.is_active ?? row.is_active,
+      });
     },
     onSuccess: () => {
-      toast.success("FAQ saved");
+      toast.success("FAQ saved in Firebase");
       done();
     },
     onError: (e: Error) => toast.error("Save failed", { description: e.message }),
@@ -57,12 +100,15 @@ export function FaqsPanel() {
 
   const add = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from("faqs").insert({
+      const newId = "faq-" + Date.now().toString(36);
+      const docRef = doc(db, "faqs", newId);
+      await setDoc(docRef, {
+        id: newId,
         question: "New question",
         answer: "Answer",
         sort_order: (data?.length ?? 0) + 1,
+        is_active: true,
       });
-      if (error) throw error;
     },
     onSuccess: done,
     onError: (e: Error) => toast.error("Could not add", { description: e.message }),
@@ -70,11 +116,11 @@ export function FaqsPanel() {
 
   const remove = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("faqs").delete().eq("id", id);
-      if (error) throw error;
+      const docRef = doc(db, "faqs", id);
+      await deleteDoc(docRef);
     },
     onSuccess: () => {
-      toast.success("Deleted");
+      toast.success("Deleted from Firebase");
       done();
     },
     onError: (e: Error) => toast.error("Delete failed", { description: e.message }),

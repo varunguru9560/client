@@ -1,46 +1,42 @@
-import { createClient } from "@supabase/supabase-js";
-import type { Database } from "@/integrations/supabase/types";
 import type { LeadInput } from "./leads.functions";
+import firebaseConfig from "../../firebase-applet-config.json";
 
 export async function insertLead(lead: LeadInput): Promise<{ created_at: string }> {
-  const key =
-    process.env["SUPABASE_PUBLISHABLE_KEY"] ||
-    process.env["VITE_SUPABASE_PUBLISHABLE_KEY"] ||
-    "sb_publishable_3TSH7huqEB_9EXY4o9iokg_HT9TBC67";
-  const url =
-    process.env["SUPABASE_URL"] ||
-    process.env["VITE_SUPABASE_URL"] ||
-    "https://leunkjtcahjrrkrkmwmp.supabase.co";
+  const createdAt = new Date().toISOString();
+  const dbId = firebaseConfig.firestoreDatabaseId || "(default)";
+  const projectId = firebaseConfig.projectId;
 
-  if (!key || !url) {
-    console.warn(
-      "[Leads Server] Supabase credentials not configured. Skipping server database insert.",
-    );
-    return { created_at: new Date().toISOString() };
+  if (!projectId) {
+    return { created_at: createdAt };
   }
 
   try {
-    const client = createClient<Database>(url, key, {
-      auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
-      global: {
-        fetch: (input, init) => {
-          const h = new Headers(init?.headers);
-          if (key.startsWith("sb_") && h.get("Authorization") === `Bearer ${key}`) {
-            h.delete("Authorization");
-          }
-          h.set("apikey", key);
-          return fetch(input, { ...init, headers: h });
-        },
+    const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/leads?key=${firebaseConfig.apiKey}`;
+    const payload = {
+      fields: {
+        name: { stringValue: lead.name },
+        phone: { stringValue: lead.phone },
+        email: { stringValue: lead.email },
+        service: { stringValue: lead.service },
+        message: { stringValue: lead.message },
+        status: { stringValue: "new" },
+        created_at: { stringValue: createdAt },
       },
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
 
-    const { error } = await client.from("leads").insert(lead);
-    if (error) {
-      console.warn("[Leads Server] Supabase insert warning:", error.message);
+    if (!response.ok) {
+      const errText = await response.text();
+      console.warn("[Firebase Leads Server Insert Notice]:", errText);
     }
   } catch (err) {
-    console.warn("[Leads Server] Failed to insert lead into Supabase:", err);
+    console.warn("[Firebase Leads Server] Failed to insert lead:", err);
   }
 
-  return { created_at: new Date().toISOString() };
+  return { created_at: createdAt };
 }

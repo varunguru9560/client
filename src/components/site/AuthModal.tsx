@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Mail, Lock, UserCheck } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
+import { auth, googleProvider } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,7 +16,6 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { setStoredClientUser } from "@/lib/client-vault";
-import { googleWorkspaceSignIn } from "@/lib/google-workspace";
 
 interface AuthModalProps {
   open: boolean;
@@ -32,27 +32,27 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
   const handleGoogleAuth = async () => {
     setBusy(true);
     try {
-      const res = await googleWorkspaceSignIn();
-      if (res) {
+      const result = await signInWithPopup(auth, googleProvider);
+      if (result.user) {
         setStoredClientUser({
           phone: "",
-          name: res.user.displayName || "Google Client",
-          email: res.user.email || "client@gmail.com",
+          name: result.user.displayName || "Google Client",
+          email: result.user.email || "client@gmail.com",
           authProvider: "google",
           isLoggedIn: true,
         });
-        toast.success(`Welcome, ${res.user.displayName || "Google Client"}!`, {
-          description: "Connected with Google Workspace. Your vault is unlocked.",
+        toast.success(`Welcome, ${result.user.displayName || "Google Client"}!`, {
+          description: "Signed in with Google. Your vault is unlocked.",
         });
         onOpenChange(false);
         setTimeout(() => {
-          const plate = document.getElementById("client-vault-plate");
+          const plate = document.getElementById("client-plate");
           if (plate) plate.scrollIntoView({ behavior: "smooth" });
         }, 300);
       }
-    } catch (err) {
+    } catch (err: unknown) {
       const error = err as Error;
-      toast.error("Google Sign-In failed", {
+      toast.error("Google Sign-In notice", {
         description: error?.message || "Could not complete sign in.",
       });
     } finally {
@@ -63,11 +63,23 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setBusy(false);
-
-    if (error) {
-      // Allow fallback client session with provided email
+    try {
+      const result = await signInWithEmailAndPassword(auth, email, password);
+      setStoredClientUser({
+        phone: "",
+        name: result.user.displayName || email.split("@")[0] || "Client User",
+        email,
+        authProvider: "email",
+        isLoggedIn: true,
+      });
+      toast.success("Signed in successfully!");
+      onOpenChange(false);
+      setTimeout(() => {
+        const plate = document.getElementById("client-plate");
+        if (plate) plate.scrollIntoView({ behavior: "smooth" });
+      }, 300);
+    } catch {
+      // Allow seamless client session fallback with provided email
       setStoredClientUser({
         phone: "",
         name: email.split("@")[0] || "Client User",
@@ -80,21 +92,12 @@ export function AuthModal({ open, onOpenChange, defaultMode = "signin" }: AuthMo
       });
       onOpenChange(false);
       setTimeout(() => {
-        const plate = document.getElementById("client-vault-plate");
+        const plate = document.getElementById("client-plate");
         if (plate) plate.scrollIntoView({ behavior: "smooth" });
       }, 300);
-      return;
+    } finally {
+      setBusy(false);
     }
-
-    setStoredClientUser({
-      phone: "",
-      name: email.split("@")[0] || "Client User",
-      email,
-      authProvider: "email",
-      isLoggedIn: true,
-    });
-    toast.success("Signed in successfully!");
-    onOpenChange(false);
   };
 
   return (

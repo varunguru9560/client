@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/select";
 import {
   getStoredLeads,
-  fetchSupabaseLeads,
+  fetchFirebaseLeads,
+  subscribeToFirebaseLeads,
   updateStoredLeadStatus,
   deleteStoredLead,
   LeadItem,
@@ -28,14 +29,14 @@ export function LeadsPanel() {
     setLeads(getStoredLeads());
   };
 
-  const handleRefreshSupabase = async () => {
+  const handleRefreshFirebase = async () => {
     setLoading(true);
     try {
-      const updated = await fetchSupabaseLeads();
+      const updated = await fetchFirebaseLeads();
       setLeads(updated);
-      toast.success("Enquiries synced with Supabase");
+      toast.success("Enquiries synced with Firebase");
     } catch {
-      toast.error("Could not sync with Supabase");
+      toast.error("Could not sync with Firebase");
     } finally {
       setLoading(false);
     }
@@ -43,12 +44,20 @@ export function LeadsPanel() {
 
   useEffect(() => {
     reload();
-    fetchSupabaseLeads().then((updated) => {
+    fetchFirebaseLeads().then((updated) => {
       setLeads(updated);
     });
+
+    const unsubscribe = subscribeToFirebaseLeads((latest) => {
+      setLeads(latest);
+    });
+
     const handleLeadsChanged = () => reload();
     window.addEventListener("leads-changed", handleLeadsChanged);
-    return () => window.removeEventListener("leads-changed", handleLeadsChanged);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("leads-changed", handleLeadsChanged);
+    };
   }, []);
 
   const handleUpdateStatus = (id: string, status: LeadItem["status"]) => {
@@ -71,19 +80,19 @@ export function LeadsPanel() {
           <div>
             <h3 className="font-semibold text-sm">Consultation Enquiries & Bookings</h3>
             <p className="text-xs text-muted-foreground">
-              Total Enquiries: {leads.length} · Live synced with Supabase
+              Total Enquiries: {leads.length} · Live synced with Firebase
             </p>
           </div>
         </div>
         <Button
           variant="outline"
           size="sm"
-          onClick={handleRefreshSupabase}
+          onClick={handleRefreshFirebase}
           disabled={loading}
           className="text-xs gap-1.5"
         >
           <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-          Refresh Supabase
+          Refresh Firebase
         </Button>
       </div>
 

@@ -9,7 +9,6 @@ import {
   Plus,
   Trash2,
   Lock,
-  Phone,
   Mail,
   CheckCircle2,
   Sparkles,
@@ -33,8 +32,8 @@ import {
   getDocumentsForClient,
   addClientDocument,
   deleteClientDocument,
-  fetchSupabaseClientDocuments,
-  uploadFileToSupabaseStorage,
+  fetchFirebaseClientDocuments,
+  subscribeToClientDocuments,
   normalizePhone,
   ClientDocument,
   ClientUser,
@@ -71,20 +70,19 @@ export function ClientPlateSection() {
   useEffect(() => {
     reload();
 
-    // Fetch initial docs from Supabase
-    fetchSupabaseClientDocuments().then(() => reload());
+    // Fetch initial docs from Firebase
+    fetchFirebaseClientDocuments().then(() => reload());
 
-    // Auto sync from Supabase every 6 seconds
-    const interval = setInterval(() => {
-      fetchSupabaseClientDocuments().then(() => reload());
-    }, 6000);
+    const unsubscribe = subscribeToClientDocuments(() => {
+      reload();
+    });
 
     const handleAuthChange = () => reload();
     const handleDocsChange = () => reload();
     window.addEventListener("client-auth-changed", handleAuthChange);
     window.addEventListener("client-docs-changed", handleDocsChange);
     return () => {
-      clearInterval(interval);
+      unsubscribe();
       window.removeEventListener("client-auth-changed", handleAuthChange);
       window.removeEventListener("client-docs-changed", handleDocsChange);
     };
@@ -125,18 +123,12 @@ export function ClientPlateSection() {
       fileName = selectedFile.name;
       fileSize = `${(selectedFile.size / 1024).toFixed(0)} KB`;
 
-      // Try Supabase Storage upload first
-      const supabasePublicUrl = await uploadFileToSupabaseStorage(selectedFile, "client-uploads");
-      if (supabasePublicUrl) {
-        fileDataUrl = supabasePublicUrl;
-      } else {
-        // Fallback to Data URL
-        fileDataUrl = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(selectedFile);
-        });
-      }
+      // Convert file to Data URL for instant storage & preview
+      fileDataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(selectedFile);
+      });
     }
 
     await addClientDocument({
@@ -156,10 +148,10 @@ export function ClientPlateSection() {
 
     setUploading(false);
     toast.success("Document uploaded successfully!", {
-      description: "Your consultant can now access this file in their admin panel.",
+      description: "Stored securely in your client pool and visible to your tax consultant.",
     });
 
-    // Reset form
+    // Reset Form
     setUploadTitle("");
     setUploadDriveUrl("");
     setUploadNotes("");
@@ -170,220 +162,368 @@ export function ClientPlateSection() {
 
   const handleDelete = async (id: string) => {
     await deleteClientDocument(id);
-    toast.success("Document removed");
+    toast.success("Document deleted");
     reload();
   };
 
-  const consultantDocs = documents.filter((d) => d.uploadedBy === "consultant");
-  const clientUploadedDocs = documents.filter((d) => d.uploadedBy === "client");
+  const handleLogout = () => {
+    setStoredClientUser(null);
+    toast.info("Logged out from client portal");
+  };
+
+  const clientUploads = documents.filter((d) => d.uploadedBy === "client");
+  const consultantUploads = documents.filter((d) => d.uploadedBy === "consultant");
 
   return (
-    <section id="client-vault-plate" className="bg-muted/30 py-16">
-      <div className="section-shell">
-        <div className="mx-auto max-w-5xl rounded-[var(--radius-xl)] border border-brand/20 bg-card p-6 shadow-[var(--shadow-card)] md:p-8">
-          {/* Header Banner Plate */}
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-6">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="grid size-9 place-items-center rounded-xl bg-brand text-brand-foreground">
-                  <FolderOpen className="size-5" />
-                </span>
-                <h2 className="font-display text-xl font-bold tracking-tight text-foreground md:text-2xl">
-                  Client Document Vault & File Plate
-                </h2>
-                <Badge
-                  variant="secondary"
-                  className="gap-1 border-brand/30 bg-brand-soft text-brand font-semibold"
-                >
-                  <ShieldCheck className="size-3.5" /> Client Portal
-                </Badge>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                View files and Google Drive links shared by your consultant or upload tax documents
-                directly.
-              </p>
+    <section
+      id="client-plate"
+      className="relative overflow-hidden bg-card/60 py-16 sm:py-24 border-y border-border/80"
+    >
+      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+        {/* Header with Title & Live Status */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-8 border-b border-border/80">
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-brand/20 bg-brand-soft px-3 py-1 text-xs font-semibold text-brand">
+              <ShieldCheck className="size-4 text-brand" /> Secure Client Document Vault
             </div>
-
-            {user?.isLoggedIn && (
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <p className="text-xs font-semibold text-foreground">{user.name || "Client"}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {user.email || (user.phone ? `+91 ${user.phone}` : "Client Portal")}
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setStoredClientUser(null)}
-                  className="rounded-full text-xs text-muted-foreground hover:text-destructive"
-                >
-                  Sign Out
-                </Button>
-              </div>
-            )}
+            <h2 className="font-display text-2xl font-bold tracking-tight sm:text-3xl text-foreground">
+              Your Personal Tax & Filing Plate
+            </h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Direct, private repository between you and your tax consultant. Download completed ITR
+              acknowledgments and GST certificates, or upload financial statements.
+            </p>
           </div>
 
-          {/* Body Content */}
-          {!user?.isLoggedIn ? (
-            <div className="mt-8 grid gap-8 md:grid-cols-12 md:items-center">
-              <div className="space-y-4 md:col-span-7">
-                <div className="inline-flex items-center gap-2 rounded-full border border-brand/20 bg-brand-soft px-3 py-1 text-xs font-semibold text-brand">
-                  <Sparkles className="size-3.5" /> Instant Client Access
-                </div>
-                <h3 className="text-xl font-bold tracking-tight">
-                  Log in to access your tax returns, certificates & Drive links
-                </h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  When you log in with your email or Google account, any files or Google Drive links
-                  attached by <strong>Shweta Singh (The Tax Maestro)</strong> in your name are
-                  immediately visible here for easy 1-click download.
-                </p>
-
-                <div className="flex flex-wrap gap-4 pt-2">
-                  <Button variant="cta" onClick={() => setAuthModalOpen(true)} className="gap-2">
-                    <Lock className="size-4" /> Log In / Sign Up to View Files
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setAuthModalOpen(true)}
-                    className="gap-2"
-                  >
-                    <svg className="size-4" viewBox="0 0 24 24">
-                      <path
-                        fill="#4285F4"
-                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                      />
-                    </svg>
-                    Continue with Google
-                  </Button>
-                </div>
+          {user && (
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-xs">
+                <div className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-semibold text-foreground">
+                  {user.name || user.email || "Client"}
+                </span>
+                {user.email && (
+                  <span className="font-mono text-muted-foreground">({user.email})</span>
+                )}
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleLogout}
+                className="text-xs h-8 text-destructive hover:bg-destructive/10"
+              >
+                Log Out
+              </Button>
+            </div>
+          )}
+        </div>
 
-              <div className="rounded-2xl border border-border bg-muted/40 p-5 md:col-span-5">
-                <h4 className="text-sm font-semibold flex items-center gap-2">
-                  <Mail className="size-4 text-brand" /> Quick Email Access
-                </h4>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Enter your registered email address to check documents instantly.
-                </p>
-                <form onSubmit={handleQuickLogin} className="mt-4 space-y-3">
-                  <Input
-                    type="email"
-                    required
-                    placeholder="client@example.com"
-                    className="font-medium"
-                    value={quickEmail}
-                    onChange={(e) => setQuickEmail(e.target.value)}
-                  />
-                  <Button type="submit" variant="brand" className="w-full text-xs font-semibold">
-                    Access My Documents
-                  </Button>
-                </form>
+        {/* Content Body: Either Login Box OR Active Client Plate */}
+        {!user ? (
+          <div className="mt-8 grid gap-8 md:grid-cols-2 items-center rounded-3xl border border-border bg-card p-6 sm:p-10 shadow-sm">
+            <div className="space-y-4">
+              <div className="inline-flex size-12 items-center justify-center rounded-2xl bg-brand-soft text-brand">
+                <Lock className="size-6" />
+              </div>
+              <h3 className="text-xl font-bold text-foreground">
+                Access Your Private Client Plate
+              </h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Log in securely to view documents shared by your consultant or upload your bills and
+                financial statements.
+              </p>
+
+              <div className="space-y-2 pt-2">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <CheckCircle2 className="size-4 text-emerald-600 shrink-0" />
+                  <span>Instant access to ITR acknowledgements & computations</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <CheckCircle2 className="size-4 text-emerald-600 shrink-0" />
+                  <span>Upload documents securely to your private folder</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <CheckCircle2 className="size-4 text-emerald-600 shrink-0" />
+                  <span>Real-time synchronisation with your consultant&apos;s workspace</span>
+                </div>
               </div>
             </div>
-          ) : (
-            <div className="mt-6 space-y-8">
-              {/* Section 1: Documents Uploaded by Us / Consultant */}
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-base font-bold flex items-center gap-2">
-                      <FileText className="size-4 text-brand" /> Documents Shared by Consultant
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      Tax filings, GST certificates, notices, and Drive links uploaded specifically
-                      for {user.email || user.name || "your account"}
-                    </p>
+
+            <div className="rounded-2xl border border-border/80 bg-muted/40 p-6 space-y-4">
+              <h4 className="font-semibold text-sm text-foreground flex items-center gap-2">
+                <Mail className="size-4 text-brand" /> Quick Access with Email / Google
+              </h4>
+
+              <form onSubmit={handleQuickLogin} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="client-quick-email" className="text-xs">
+                    Your Email Address
+                  </Label>
+                  <Input
+                    id="client-quick-email"
+                    type="email"
+                    required
+                    placeholder="e.g. client@example.com"
+                    value={quickEmail}
+                    onChange={(e) => setQuickEmail(e.target.value)}
+                    className="h-10 text-sm"
+                  />
+                </div>
+                <Button type="submit" variant="cta" className="w-full h-10 text-sm">
+                  View My Documents
+                </Button>
+              </form>
+
+              <div className="relative text-center text-xs text-muted-foreground uppercase my-2">
+                <span className="bg-muted/40 px-2">Or</span>
+                <div className="absolute inset-0 top-1/2 -z-10 border-t border-border" />
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAuthModalOpen(true)}
+                className="w-full h-10 text-sm border-border bg-card hover:bg-accent"
+              >
+                Sign In with Google or Password
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-8 space-y-8">
+            {/* Top Action Bar for Logged in Client */}
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4">
+              <div className="flex items-center gap-3">
+                <div className="grid size-10 place-items-center rounded-xl bg-brand-soft text-brand font-bold text-sm">
+                  {user.name ? user.name[0].toUpperCase() : "C"}
+                </div>
+                <div>
+                  <h4 className="font-semibold text-sm text-foreground">
+                    {user.name || "Client Vault"}
+                  </h4>
+                  <p className="text-xs text-muted-foreground">
+                    {user.email ? `Email: ${user.email}` : "Client Profile Active"}
+                  </p>
+                </div>
+              </div>
+
+              <Button
+                variant="cta"
+                size="sm"
+                onClick={() => setShowUploadForm(!showUploadForm)}
+                className="gap-1.5 text-xs shadow-xs"
+              >
+                <Plus className="size-4" />
+                {showUploadForm ? "Close Upload Form" : "Upload Document for Consultant"}
+              </Button>
+            </div>
+
+            {/* Upload Document Modal/Collapsible Box */}
+            {showUploadForm && (
+              <form
+                onSubmit={handleClientFileUpload}
+                className="rounded-2xl border border-brand/30 bg-brand-soft/20 p-6 space-y-4 shadow-sm"
+              >
+                <div className="flex items-center justify-between border-b border-brand/20 pb-3">
+                  <div className="flex items-center gap-2 font-semibold text-sm text-brand">
+                    <Upload className="size-4" /> Upload Document to Consultant
                   </div>
-                  <Badge variant="outline" className="font-mono text-xs">
-                    {consultantDocs.length} File(s)
+                  <span className="text-xs text-muted-foreground">
+                    Client: {user.name || user.email}
+                  </span>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="upload-title" className="text-xs font-semibold">
+                      Document Title *
+                    </Label>
+                    <Input
+                      id="upload-title"
+                      required
+                      placeholder="e.g. Bank Statement April-March, Form 16"
+                      value={uploadTitle}
+                      onChange={(e) => setUploadTitle(e.target.value)}
+                      className="bg-background text-xs h-9"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="upload-cat" className="text-xs font-semibold">
+                      Category *
+                    </Label>
+                    <Select
+                      value={uploadCategory}
+                      onValueChange={(val: ClientDocument["category"]) => setUploadCategory(val)}
+                    >
+                      <SelectTrigger id="upload-cat" className="bg-background text-xs h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ITR Return">ITR Return</SelectItem>
+                        <SelectItem value="GST Certificate">GST Certificate</SelectItem>
+                        <SelectItem value="Audit Report">Audit Report</SelectItem>
+                        <SelectItem value="Form 16">Form 16</SelectItem>
+                        <SelectItem value="Notice & Reply">Notice & Reply</SelectItem>
+                        <SelectItem value="Financial Statements">Financial Statements</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="upload-file" className="text-xs font-semibold">
+                      Select File (PDF, Image, Excel, ZIP)
+                    </Label>
+                    <Input
+                      id="upload-file"
+                      type="file"
+                      onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                      className="bg-background text-xs h-9 cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="upload-drive" className="text-xs font-semibold">
+                      Or Google Drive / Cloud Link (Optional)
+                    </Label>
+                    <Input
+                      id="upload-drive"
+                      type="url"
+                      placeholder="https://drive.google.com/..."
+                      value={uploadDriveUrl}
+                      onChange={(e) => setUploadDriveUrl(e.target.value)}
+                      className="bg-background text-xs h-9"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="upload-notes" className="text-xs font-semibold">
+                    Notes / Remarks for Consultant (Optional)
+                  </Label>
+                  <Textarea
+                    id="upload-notes"
+                    rows={2}
+                    placeholder="e.g. Please find the statement attached for FY 2024-25 filing..."
+                    value={uploadNotes}
+                    onChange={(e) => setUploadNotes(e.target.value)}
+                    className="bg-background text-xs"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-brand/20">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowUploadForm(false)}
+                    className="text-xs"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="cta"
+                    size="sm"
+                    disabled={uploading}
+                    className="text-xs"
+                  >
+                    {uploading ? "Uploading…" : "Upload to Vault"}
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            {/* Two Side-by-Side Vault Columns */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* SECTION 1: DOCUMENTS FROM CONSULTANT */}
+              <div className="rounded-3xl border border-border bg-card p-5 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between border-b border-border/70 pb-3">
+                  <div className="flex items-center gap-2">
+                    <FileText className="size-5 text-emerald-600" />
+                    <div>
+                      <h3 className="font-bold text-sm text-foreground">
+                        📤 Completed Returns & Filings
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Official acknowledgements uploaded for you
+                      </p>
+                    </div>
+                  </div>
+                  <Badge variant="secondary" className="text-xs">
+                    {consultantUploads.length} Item(s)
                   </Badge>
                 </div>
 
-                {consultantDocs.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-border p-8 text-center bg-muted/20">
-                    <FolderOpen className="mx-auto size-8 text-muted-foreground/60" />
-                    <p className="mt-2 text-sm font-medium text-foreground">
-                      No documents attached yet
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground max-w-md mx-auto">
-                      Any documents or Google Drive links added by the owner/admin for your account
-                      ({user.email || user.name || "Client Portal"}) will automatically appear here.
+                {consultantUploads.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border p-8 text-center text-xs text-muted-foreground space-y-2">
+                    <FolderOpen className="size-8 mx-auto text-muted-foreground/50" />
+                    <p>No filed documents uploaded by your consultant yet.</p>
+                    <p className="text-[11px] text-muted-foreground/80">
+                      Once filed, your computation sheet and ITR-V will appear here.
                     </p>
                   </div>
                 ) : (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    {consultantDocs.map((doc) => (
+                  <div className="space-y-3">
+                    {consultantUploads.map((doc) => (
                       <div
                         key={doc.id}
-                        className="rounded-2xl border border-border bg-card p-5 transition-all hover:border-brand/40 hover:shadow-sm flex flex-col justify-between space-y-4"
+                        className="rounded-2xl border border-emerald-200/80 bg-emerald-50/40 p-4 space-y-3 dark:bg-emerald-950/20"
                       >
-                        <div className="space-y-2">
-                          <div className="flex items-start justify-between gap-2">
-                            <Badge
-                              variant="secondary"
-                              className="bg-brand-soft text-brand font-semibold text-[0.7rem]"
-                            >
-                              {doc.category}
-                            </Badge>
-                            <span className="text-[0.7rem] text-muted-foreground">
-                              {new Date(doc.createdAt).toLocaleDateString()}
-                            </span>
-                          </div>
-                          <h4 className="font-semibold text-sm leading-snug">{doc.title}</h4>
-                          {doc.notes && (
-                            <p className="text-xs text-muted-foreground bg-muted/40 p-2.5 rounded-lg border border-border/50">
-                              {doc.notes}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <Badge
+                                variant="secondary"
+                                className="bg-emerald-100 text-emerald-800 text-[0.65rem] font-semibold"
+                              >
+                                {doc.category}
+                              </Badge>
+                              <span className="text-[0.7rem] text-muted-foreground">
+                                {new Date(doc.createdAt).toLocaleDateString()}
+                              </span>
+                            </div>
+                            <h4 className="font-semibold text-sm text-foreground">{doc.title}</h4>
+                            <p className="text-xs text-muted-foreground">
+                              Shared by: {doc.uploaderName}
                             </p>
-                          )}
+                          </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border">
-                          {doc.driveUrl && (
+                        {doc.notes && (
+                          <p className="text-xs text-muted-foreground bg-background/80 p-2 rounded-lg border border-border/50">
+                            <strong>Remark:</strong> {doc.notes}
+                          </p>
+                        )}
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-200/50">
+                          {doc.driveUrl ? (
                             <a
                               href={doc.driveUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand hover:underline bg-brand-soft px-3 py-1.5 rounded-lg"
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline"
                             >
-                              <ExternalLink className="size-3.5" /> Open Google Drive
+                              <ExternalLink className="size-3.5" /> Open Google Drive File
                             </a>
+                          ) : (
+                            <span className="text-xs text-muted-foreground font-medium">
+                              {doc.fileName ? `File: ${doc.fileName}` : "Official Document"}
+                            </span>
                           )}
 
                           {doc.fileUrl ? (
                             <a
                               href={doc.fileUrl}
                               download={doc.fileName || `${doc.title}.pdf`}
-                              className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-brand hover:bg-brand-deep px-3 py-1.5 rounded-lg transition-colors"
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 px-3 py-1.5 rounded-lg transition-colors"
                             >
-                              <Download className="size-3.5" /> Download File (
-                              {doc.fileSize || "PDF"})
+                              <Download className="size-3.5" /> Download ({doc.fileSize || "File"})
                             </a>
-                          ) : (
-                            !doc.driveUrl && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => toast.info("Opening document details...")}
-                                className="text-xs gap-1"
-                              >
-                                <Download className="size-3.5" /> Download
-                              </Button>
-                            )
-                          )}
+                          ) : null}
                         </div>
                       </div>
                     ))}
@@ -391,167 +531,112 @@ export function ClientPlateSection() {
                 )}
               </div>
 
-              {/* Section 2: Client Upload Section */}
-              <div className="border-t border-border pt-8">
-                <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-                  <div>
-                    <h3 className="text-base font-bold flex items-center gap-2">
-                      <Upload className="size-4 text-brand" /> Upload Files / Drive Links to
-                      Consultant
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      Upload your bank statements, Form 16, or share a Google Drive link directly
-                      with the consultant.
-                    </p>
+              {/* SECTION 2: DOCUMENTS UPLOADED BY CLIENT */}
+              <div className="rounded-3xl border border-border bg-card p-5 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between border-b border-border/70 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Upload className="size-5 text-blue-600" />
+                    <div>
+                      <h3 className="font-bold text-sm text-foreground">
+                        📥 My Uploaded Documents
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Files you have shared with the consultant
+                      </p>
+                    </div>
                   </div>
-                  <Button
-                    variant="brandOutline"
-                    size="sm"
-                    onClick={() => setShowUploadForm((v) => !v)}
-                    className="gap-1 text-xs"
-                  >
-                    <Plus className="size-3.5" />{" "}
-                    {showUploadForm ? "Cancel Upload" : "Upload New File / Link"}
-                  </Button>
+                  <Badge variant="secondary" className="text-xs">
+                    {clientUploads.length} Item(s)
+                  </Badge>
                 </div>
 
-                {showUploadForm && (
-                  <form
-                    onSubmit={handleClientFileUpload}
-                    className="rounded-2xl border border-brand/30 bg-brand-soft/20 p-5 space-y-4 mb-6"
-                  >
-                    <h4 className="text-sm font-semibold text-foreground">
-                      Upload Document Details
-                    </h4>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="upload-title">Document Title *</Label>
-                        <Input
-                          id="upload-title"
-                          required
-                          placeholder="e.g. HDFC Bank Statement FY 2024-25"
-                          value={uploadTitle}
-                          onChange={(e) => setUploadTitle(e.target.value)}
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <Label htmlFor="upload-cat">Document Category</Label>
-                        <Select
-                          value={uploadCategory}
-                          onValueChange={(v) => setUploadCategory(v as ClientDocument["category"])}
-                        >
-                          <SelectTrigger id="upload-cat">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="ITR Return">ITR / Income Tax</SelectItem>
-                            <SelectItem value="Form 16">Form 16 / Salary Slips</SelectItem>
-                            <SelectItem value="GST Certificate">GST Documents</SelectItem>
-                            <SelectItem value="Financial Statements">
-                              Bank & Financial Statements
-                            </SelectItem>
-                            <SelectItem value="Notice & Reply">Notice / Correspondence</SelectItem>
-                            <SelectItem value="Audit Report">Audit Report</SelectItem>
-                            <SelectItem value="Other">Other Document</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="upload-file">Select File (PDF / Image / Zip)</Label>
-                        <Input
-                          id="upload-file"
-                          type="file"
-                          accept=".pdf,.png,.jpg,.jpeg,.zip,.docx"
-                          onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <Label htmlFor="upload-drive">OR Paste Google Drive / External URL</Label>
-                        <Input
-                          id="upload-drive"
-                          type="url"
-                          placeholder="https://drive.google.com/..."
-                          value={uploadDriveUrl}
-                          onChange={(e) => setUploadDriveUrl(e.target.value)}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label htmlFor="upload-notes">Notes / Instructions for Consultant</Label>
-                      <Textarea
-                        id="upload-notes"
-                        rows={2}
-                        placeholder="e.g. Attached bank statement for Q3 tax estimation."
-                        value={uploadNotes}
-                        onChange={(e) => setUploadNotes(e.target.value)}
-                      />
-                    </div>
-
-                    <Button type="submit" variant="cta" disabled={uploading} className="gap-2">
-                      {uploading ? "Uploading..." : "Submit Document to Consultant"}
+                {clientUploads.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border p-8 text-center text-xs text-muted-foreground space-y-2">
+                    <Upload className="size-8 mx-auto text-muted-foreground/50" />
+                    <p>You have not uploaded any documents yet.</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowUploadForm(true)}
+                      className="text-xs mt-2"
+                    >
+                      <Plus className="size-3 mr-1" /> Upload Your First Document
                     </Button>
-                  </form>
-                )}
-
-                {/* Client's Uploaded List */}
-                {clientUploadedDocs.length > 0 && (
-                  <div className="space-y-3 mt-4">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Files You Have Uploaded ({clientUploadedDocs.length})
-                    </p>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {clientUploadedDocs.map((doc) => (
-                        <div
-                          key={doc.id}
-                          className="rounded-xl border border-border bg-card p-4 flex items-start justify-between gap-3 text-xs"
-                        >
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {clientUploads.map((doc) => (
+                      <div
+                        key={doc.id}
+                        className="rounded-2xl border border-blue-200/80 bg-blue-50/40 p-4 space-y-3 dark:bg-blue-950/20"
+                      >
+                        <div className="flex items-start justify-between gap-2">
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
-                              <Badge variant="secondary" className="text-[0.65rem]">
+                              <Badge
+                                variant="secondary"
+                                className="bg-blue-100 text-blue-800 text-[0.65rem] font-semibold"
+                              >
                                 {doc.category}
                               </Badge>
-                              <span className="text-[0.65rem] text-muted-foreground">
+                              <span className="text-[0.7rem] text-muted-foreground">
                                 {new Date(doc.createdAt).toLocaleDateString()}
                               </span>
                             </div>
-                            <p className="font-semibold text-sm">{doc.title}</p>
-                            {doc.fileName && (
-                              <p className="text-muted-foreground">File: {doc.fileName}</p>
-                            )}
-                            {doc.driveUrl && (
-                              <a
-                                href={doc.driveUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-brand hover:underline inline-flex items-center gap-1 mt-1 font-medium"
-                              >
-                                <ExternalLink className="size-3" /> Drive Link
-                              </a>
-                            )}
+                            <h4 className="font-semibold text-sm text-foreground">{doc.title}</h4>
                           </div>
+
                           <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => handleDelete(doc.id)}
-                            className="text-muted-foreground hover:text-destructive size-7"
+                            className="text-destructive size-7 shrink-0"
+                            title="Delete"
                           >
                             <Trash2 className="size-3.5" />
                           </Button>
                         </div>
-                      ))}
-                    </div>
+
+                        {doc.notes && (
+                          <p className="text-xs text-muted-foreground bg-background/80 p-2 rounded-lg border border-border/50">
+                            <strong>Note:</strong> {doc.notes}
+                          </p>
+                        )}
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-blue-200/50">
+                          {doc.driveUrl ? (
+                            <a
+                              href={doc.driveUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline"
+                            >
+                              <ExternalLink className="size-3.5" /> Drive Link
+                            </a>
+                          ) : (
+                            <span className="text-xs text-muted-foreground font-medium">
+                              {doc.fileName ? `File: ${doc.fileName}` : "Uploaded File"}
+                            </span>
+                          )}
+
+                          {doc.fileUrl ? (
+                            <a
+                              href={doc.fileUrl}
+                              download={doc.fileName || `${doc.title}.pdf`}
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              <Download className="size-3.5" /> Download ({doc.fileSize || "File"})
+                            </a>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />

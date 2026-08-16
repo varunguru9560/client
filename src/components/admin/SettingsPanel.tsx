@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Shield, UserCheck } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +13,7 @@ import {
   saveAuthorizedAdminEmails,
   resetAllAdminSessions,
 } from "@/lib/admin-auth";
+import { business as defaultBusiness } from "@/data/site";
 
 type Form = {
   name: string;
@@ -36,13 +38,40 @@ export function SettingsPanel() {
   const { data, isLoading } = useQuery({
     queryKey: ["admin", "site_settings"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("site_settings")
-        .select("*")
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      return data;
+      const docRef = doc(db, "site_settings", "current");
+      const snap = await getDoc(docRef);
+
+      if (!snap.exists()) {
+        const initial = {
+          name: defaultBusiness.name,
+          person: defaultBusiness.person,
+          role: defaultBusiness.role,
+          tagline: defaultBusiness.tagline,
+          gstin: defaultBusiness.gstin,
+          mobile: defaultBusiness.mobile,
+          landline: defaultBusiness.landline,
+          address: defaultBusiness.address,
+          hours: defaultBusiness.hours.map((h) => `${h.day}: ${h.time}`),
+        };
+        try {
+          await setDoc(docRef, initial);
+        } catch {
+          // ignore
+        }
+        return initial;
+      }
+
+      return snap.data() as {
+        name: string;
+        person: string;
+        role: string;
+        tagline: string;
+        gstin: string;
+        mobile: string;
+        landline: string;
+        address: string;
+        hours: string[];
+      };
     },
   });
 
@@ -52,16 +81,16 @@ export function SettingsPanel() {
     setAdmin2(admins[1] || "");
 
     if (!data) return;
-    const hours = Array.isArray(data.hours) ? (data.hours as string[]) : [];
+    const hours = Array.isArray(data.hours) ? data.hours : [];
     setForm({
-      name: data.name,
-      person: data.person,
-      role: data.role,
-      tagline: data.tagline,
-      gstin: data.gstin,
-      mobile: data.mobile,
-      landline: data.landline,
-      address: data.address,
+      name: data.name || "",
+      person: data.person || "",
+      role: data.role || "",
+      tagline: data.tagline || "",
+      gstin: data.gstin || "",
+      mobile: data.mobile || "",
+      landline: data.landline || "",
+      address: data.address || "",
       hoursText: hours.join("\n"),
     });
   }, [data]);
@@ -85,22 +114,24 @@ export function SettingsPanel() {
 
   const save = useMutation({
     mutationFn: async (values: Form) => {
-      if (!data) throw new Error("Settings row missing");
       const { hoursText, ...rest } = values;
-      const { error } = await supabase
-        .from("site_settings")
-        .update({
+      const hours = hoursText
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const docRef = doc(db, "site_settings", "current");
+      await setDoc(
+        docRef,
+        {
           ...rest,
-          hours: hoursText
-            .split("\n")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        })
-        .eq("id", data.id);
-      if (error) throw error;
+          hours,
+        },
+        { merge: true },
+      );
     },
     onSuccess: () => {
-      toast.success("Business details saved");
+      toast.success("Business details saved in Firebase");
       qc.invalidateQueries({ queryKey: ["admin", "site_settings"] });
     },
     onError: (e: Error) => toast.error("Save failed", { description: e.message }),

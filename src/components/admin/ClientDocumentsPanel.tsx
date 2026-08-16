@@ -29,8 +29,8 @@ import {
   getAllClientDocuments,
   addClientDocument,
   deleteClientDocument,
-  fetchSupabaseClientDocuments,
-  uploadFileToSupabaseStorage,
+  fetchFirebaseClientDocuments,
+  subscribeToClientDocuments,
   normalizePhone,
   ClientDocument,
 } from "@/lib/client-vault";
@@ -63,13 +63,12 @@ export function ClientDocumentsPanel() {
   useEffect(() => {
     reload();
 
-    // Fetch initial docs from Supabase
-    fetchSupabaseClientDocuments().then(() => reload());
+    // Fetch initial docs from Firebase
+    fetchFirebaseClientDocuments().then(() => reload());
 
-    // Auto sync from Supabase every 6 seconds
-    const interval = setInterval(() => {
-      fetchSupabaseClientDocuments().then(() => reload());
-    }, 6000);
+    const unsubscribe = subscribeToClientDocuments((docs) => {
+      setDocuments(docs);
+    });
 
     const loadLeads = () => {
       const stored = getStoredLeads();
@@ -83,7 +82,7 @@ export function ClientDocumentsPanel() {
     window.addEventListener("client-docs-changed", handleDocsChange);
     window.addEventListener("leads-changed", handleLeadsChange);
     return () => {
-      clearInterval(interval);
+      unsubscribe();
       window.removeEventListener("client-docs-changed", handleDocsChange);
       window.removeEventListener("leads-changed", handleLeadsChange);
     };
@@ -120,18 +119,12 @@ export function ClientDocumentsPanel() {
       fileName = file.name;
       fileSize = `${(file.size / 1024).toFixed(0)} KB`;
 
-      // Try Supabase Storage upload first
-      const supabasePublicUrl = await uploadFileToSupabaseStorage(file, "admin-uploads");
-      if (supabasePublicUrl) {
-        fileDataUrl = supabasePublicUrl;
-      } else {
-        // Fallback to Data URL
-        fileDataUrl = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(file);
-        });
-      }
+      // Convert file to Data URL for direct storage & preview
+      fileDataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
     }
 
     await addClientDocument({

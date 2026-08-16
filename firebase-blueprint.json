@@ -1,0 +1,121 @@
+{
+  "entities": {
+    "Lead": {
+      "title": "Lead",
+      "description": "Consultation enquiries submitted by website visitors",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "service": { "type": "string" },
+        "message": { "type": "string" },
+        "status": { "type": "string", "enum": ["new", "contacted", "converted", "closed"] },
+        "created_at": { "type": "string" }
+      },
+      "required": ["name", "phone", "email", "created_at"]
+    },
+    "ClientDocument": {
+      "title": "ClientDocument",
+      "description": "Tax returns, GST certs, invoices, drive links exchanged between client and admin",
+      "type": "object",
+      "properties": {
+        "clientPhone": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientEmail": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "uploadedBy": { "type": "string", "enum": ["client", "admin"] },
+        "uploaderName": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "driveUrl": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileSize": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["title", "uploadedBy", "created_at"]
+    },
+    "ServiceGroup": {
+      "title": "ServiceGroup",
+      "description": "Categorized taxation and registration service groups",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "icon": { "type": "string" },
+        "blurb": { "type": "string" },
+        "items": { "type": "array", "items": { "type": "string" } },
+        "sort_order": { "type": "number" },
+        "is_active": { "type": "boolean" }
+      },
+      "required": ["title", "sort_order", "is_active"]
+    },
+    "Faq": {
+      "title": "Faq",
+      "description": "Frequently asked questions for clients",
+      "type": "object",
+      "properties": {
+        "question": { "type": "string" },
+        "answer": { "type": "string" },
+        "sort_order": { "type": "number" },
+        "is_active": { "type": "boolean" }
+      },
+      "required": ["question", "answer", "sort_order", "is_active"]
+    },
+    "Testimonial": {
+      "title": "Testimonial",
+      "description": "Client reviews and ratings",
+      "type": "object",
+      "properties": {
+        "quote": { "type": "string" },
+        "author": { "type": "string" },
+        "rating": { "type": "number" },
+        "sort_order": { "type": "number" },
+        "is_active": { "type": "boolean" }
+      },
+      "required": ["quote", "author", "rating", "sort_order", "is_active"]
+    },
+    "SiteSettings": {
+      "title": "SiteSettings",
+      "description": "Firm contact details and business metadata",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "person": { "type": "string" },
+        "role": { "type": "string" },
+        "tagline": { "type": "string" },
+        "gstin": { "type": "string" },
+        "mobile": { "type": "string" },
+        "landline": { "type": "string" },
+        "address": { "type": "string" },
+        "hours": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["name", "mobile", "address"]
+    }
+  },
+  "firestore": {
+    "/leads/{leadId}": {
+      "schema": "Lead",
+      "description": "Lead consultation enquiries"
+    },
+    "/client_documents/{docId}": {
+      "schema": "ClientDocument",
+      "description": "Client and admin document exchange repository"
+    },
+    "/service_groups/{groupId}": {
+      "schema": "ServiceGroup",
+      "description": "Service categories"
+    },
+    "/faqs/{faqId}": {
+      "schema": "Faq",
+      "description": "FAQs"
+    },
+    "/testimonials/{testimonialId}": {
+      "schema": "Testimonial",
+      "description": "Reviews"
+    },
+    "/site_settings/{settingId}": {
+      "schema": "SiteSettings",
+      "description": "Site settings"
+    }
+  }
+}

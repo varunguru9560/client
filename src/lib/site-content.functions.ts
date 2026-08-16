@@ -1,6 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createClient } from "@supabase/supabase-js";
-import type { Database } from "@/integrations/supabase/types";
+import firebaseConfig from "../../firebase-applet-config.json";
 
 export type RawSiteContent = {
   settings: {
@@ -19,71 +18,128 @@ export type RawSiteContent = {
   faqs: { id: string; question: string; answer: string }[];
 };
 
+type FirestoreValue = {
+  stringValue?: string;
+  integerValue?: string;
+  doubleValue?: number;
+  booleanValue?: boolean;
+  arrayValue?: { values?: FirestoreValue[] };
+  mapValue?: { fields?: Record<string, FirestoreValue> };
+};
+
+type FirestoreDoc = {
+  name: string;
+  fields?: Record<string, FirestoreValue>;
+};
+
 export const getSiteContent = createServerFn({ method: "GET" }).handler(
   async (): Promise<RawSiteContent> => {
-    const key = process.env["SUPABASE_PUBLISHABLE_KEY"];
-    const url = process.env["SUPABASE_URL"];
+    const projectId = firebaseConfig.projectId;
+    const apiKey = firebaseConfig.apiKey;
+    const dbId = firebaseConfig.firestoreDatabaseId || "(default)";
 
-    if (!key || !url) {
+    if (!projectId || !apiKey) {
       return { settings: null, serviceGroups: [], testimonials: [], faqs: [] };
     }
 
     try {
-      const supabase = createClient<Database>(url, key, {
-        auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
-        global: {
-          fetch: (input, init) => {
-            const h = new Headers(init?.headers);
-            if (key.startsWith("sb_") && h.get("Authorization") === `Bearer ${key}`) {
-              h.delete("Authorization");
-            }
-            h.set("apikey", key);
-            return fetch(input, { ...init, headers: h });
-          },
-        },
-      });
+      const baseUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents`;
 
-      const [settings, services, testimonials, faqs] = await Promise.all([
-        supabase
-          .from("site_settings")
-          .select("name, person, role, tagline, gstin, mobile, landline, address, hours")
-          .limit(1)
-          .maybeSingle(),
-        supabase
-          .from("service_groups")
-          .select("id, title, icon, blurb, items")
-          .eq("is_active", true)
-          .order("sort_order"),
-        supabase
-          .from("testimonials")
-          .select("id, quote, author, rating")
-          .eq("is_active", true)
-          .order("sort_order"),
-        supabase
-          .from("faqs")
-          .select("id, question, answer")
-          .eq("is_active", true)
-          .order("sort_order"),
+      const [settingsRes, servicesRes, testimonialsRes, faqsRes] = await Promise.all([
+        fetch(`${baseUrl}/site_settings/current?key=${apiKey}`).catch(() => null),
+        fetch(`${baseUrl}/service_groups?key=${apiKey}`).catch(() => null),
+        fetch(`${baseUrl}/testimonials?key=${apiKey}`).catch(() => null),
+        fetch(`${baseUrl}/faqs?key=${apiKey}`).catch(() => null),
       ]);
 
-      return {
-        settings: settings.data
-          ? {
-              ...settings.data,
-              hours: Array.isArray(settings.data.hours)
-                ? (settings.data.hours as { day: string; time: string }[])
-                : [],
-            }
-          : null,
-        serviceGroups: services.data ?? [],
-        testimonials: testimonials.data ?? [],
-        faqs: faqs.data ?? [],
-      };
+      let settings = null;
+      if (settingsRes && settingsRes.ok) {
+        const doc: FirestoreDoc = await settingsRes.json();
+        if (doc.fields) {
+          const hoursValues = doc.fields.hours?.arrayValue?.values || [];
+          const hours = hoursValues.map((v) => {
+            const str = v.stringValue || "";
+            const [day, ...timeParts] = str.split(":");
+            return { day: day?.trim() || "", time: timeParts.join(":").trim() };
+          });
+          settings = {
+            name: doc.fields.name?.stringValue || "",
+            person: doc.fields.person?.stringValue || "",
+            role: doc.fields.role?.stringValue || "",
+            tagline: doc.fields.tagline?.stringValue || "",
+            gstin: doc.fields.gstin?.stringValue || "",
+            mobile: doc.fields.mobile?.stringValue || "",
+            landline: doc.fields.landline?.stringValue || "",
+            address: doc.fields.address?.stringValue || "",
+            hours,
+          };
+        }
+      }
+
+      const serviceGroups: {
+        id: string;
+        title: string;
+        icon: string;
+        blurb: string;
+        items: string[];
+      }[] = [];
+      if (servicesRes && servicesRes.ok) {
+        const json = await servicesRes.json();
+        const docs: FirestoreDoc[] = json.documents || [];
+        docs.forEach((doc) => {
+          if (doc.fields) {
+            const id = doc.name.split("/").pop() || "";
+            const items =
+              doc.fields.items?.arrayValue?.values?.map((v) => v.stringValue || "") || [];
+            serviceGroups.push({
+              id,
+              title: doc.fields.title?.stringValue || "",
+              icon: doc.fields.icon?.stringValue || "Sparkles",
+              blurb: doc.fields.blurb?.stringValue || "",
+              items,
+            });
+          }
+        });
+      }
+
+      const testimonials: { id: string; quote: string; author: string; rating: number }[] = [];
+      if (testimonialsRes && testimonialsRes.ok) {
+        const json = await testimonialsRes.json();
+        const docs: FirestoreDoc[] = json.documents || [];
+        docs.forEach((doc) => {
+          if (doc.fields) {
+            const id = doc.name.split("/").pop() || "";
+            testimonials.push({
+              id,
+              quote: doc.fields.quote?.stringValue || "",
+              author: doc.fields.author?.stringValue || "",
+              rating: Number(
+                doc.fields.rating?.integerValue || doc.fields.rating?.doubleValue || 5,
+              ),
+            });
+          }
+        });
+      }
+
+      const faqs: { id: string; question: string; answer: string }[] = [];
+      if (faqsRes && faqsRes.ok) {
+        const json = await faqsRes.json();
+        const docs: FirestoreDoc[] = json.documents || [];
+        docs.forEach((doc) => {
+          if (doc.fields) {
+            const id = doc.name.split("/").pop() || "";
+            faqs.push({
+              id,
+              question: doc.fields.question?.stringValue || "",
+              answer: doc.fields.answer?.stringValue || "",
+            });
+          }
+        });
+      }
+
+      return { settings, serviceGroups, testimonials, faqs };
     } catch (err) {
-      console.warn(
-        "Failed to fetch site content from Supabase, falling back to default site data:",
-        err,
-      );
+      console.warn("Falling back to default site data:", err);
       return { settings: null, serviceGroups: [], testimonials: [], faqs: [] };
     }
   },

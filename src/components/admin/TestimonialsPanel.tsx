@@ -1,12 +1,23 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  orderBy,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { testimonials as defaultTestimonials } from "@/data/site";
 
 type Row = {
   id: string;
@@ -24,9 +35,46 @@ export function TestimonialsPanel() {
   const { data, isLoading } = useQuery({
     queryKey: ["admin", "testimonials"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("testimonials").select("*").order("sort_order");
-      if (error) throw error;
-      return data as Row[];
+      const colRef = collection(db, "testimonials");
+      const q = query(colRef, orderBy("sort_order", "asc"));
+      const snapshot = await getDocs(q);
+
+      if (snapshot.empty) {
+        // Seed default testimonials if Firestore is empty
+        const initialList: Row[] = [];
+        for (let i = 0; i < defaultTestimonials.length; i++) {
+          const t = defaultTestimonials[i];
+          const newDoc: Row = {
+            id: `test-${i + 1}`,
+            quote: t.quote,
+            author: t.author,
+            rating: 5,
+            sort_order: i + 1,
+            is_active: true,
+          };
+          initialList.push(newDoc);
+          try {
+            await setDoc(doc(db, "testimonials", newDoc.id), newDoc);
+          } catch {
+            // ignore
+          }
+        }
+        return initialList;
+      }
+
+      const list: Row[] = [];
+      snapshot.forEach((d) => {
+        const item = d.data();
+        list.push({
+          id: d.id,
+          quote: item.quote || "",
+          author: item.author || "",
+          rating: Number(item.rating ?? 5),
+          sort_order: Number(item.sort_order ?? 1),
+          is_active: Boolean(item.is_active ?? true),
+        });
+      });
+      return list;
     },
   });
 
@@ -38,20 +86,17 @@ export function TestimonialsPanel() {
   const save = useMutation({
     mutationFn: async (row: Row) => {
       const patch = draft[row.id] ?? {};
-      const { error } = await supabase
-        .from("testimonials")
-        .update({
-          quote: patch.quote ?? row.quote,
-          author: patch.author ?? row.author,
-          rating: patch.rating ?? row.rating,
-          sort_order: patch.sort_order ?? row.sort_order,
-          is_active: patch.is_active ?? row.is_active,
-        })
-        .eq("id", row.id);
-      if (error) throw error;
+      const docRef = doc(db, "testimonials", row.id);
+      await updateDoc(docRef, {
+        quote: patch.quote ?? row.quote,
+        author: patch.author ?? row.author,
+        rating: patch.rating ?? row.rating,
+        sort_order: patch.sort_order ?? row.sort_order,
+        is_active: patch.is_active ?? row.is_active,
+      });
     },
     onSuccess: () => {
-      toast.success("Review saved");
+      toast.success("Review saved in Firebase");
       done();
     },
     onError: (e: Error) => toast.error("Save failed", { description: e.message }),
@@ -59,12 +104,16 @@ export function TestimonialsPanel() {
 
   const add = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from("testimonials").insert({
+      const newId = "test-" + Date.now().toString(36);
+      const docRef = doc(db, "testimonials", newId);
+      await setDoc(docRef, {
+        id: newId,
         quote: "New client review",
         author: "Client name",
+        rating: 5,
         sort_order: (data?.length ?? 0) + 1,
+        is_active: true,
       });
-      if (error) throw error;
     },
     onSuccess: done,
     onError: (e: Error) => toast.error("Could not add", { description: e.message }),
@@ -72,11 +121,11 @@ export function TestimonialsPanel() {
 
   const remove = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("testimonials").delete().eq("id", id);
-      if (error) throw error;
+      const docRef = doc(db, "testimonials", id);
+      await deleteDoc(docRef);
     },
     onSuccess: () => {
-      toast.success("Deleted");
+      toast.success("Deleted from Firebase");
       done();
     },
     onError: (e: Error) => toast.error("Delete failed", { description: e.message }),

@@ -2,7 +2,13 @@ import { createFileRoute, useNavigate, Link, useSearch } from "@tanstack/react-r
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Lock, ShieldAlert, KeyRound, UserCheck, RefreshCw } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+  onAuthStateChanged,
+} from "firebase/auth";
+import { auth, googleProvider } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -60,24 +66,37 @@ function AuthPage() {
       });
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session && isAllowedAdminEmail(data.session.user.email)) {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user && isAllowedAdminEmail(user.email)) {
         navigate({ to: "/admin", replace: true });
       }
     });
+
+    return () => unsubscribe();
   }, [navigate, searchParams.unauthorized]);
 
   const handleGoogleAuth = async () => {
     setBusy(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/admin`,
-      },
-    });
-    setBusy(false);
-    if (error) {
-      toast.error("Google sign in notice", { description: error.message });
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      if (result.user) {
+        if (!isAllowedAdminEmail(result.user.email)) {
+          await auth.signOut();
+          toast.error("Access Restricted", {
+            description: `"${result.user.email}" is not listed as one of the 2 authorized admin accounts.`,
+          });
+          setBusy(false);
+          return;
+        }
+        claimAdminSlot(result.user.email || "");
+        toast.success("Welcome back, Admin!");
+        navigate({ to: "/admin", replace: true });
+      }
+    } catch (err: unknown) {
+      const error = err as Error;
+      toast.error("Google sign in notice", { description: error?.message || String(err) });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -106,8 +125,8 @@ function AuthPage() {
     e.preventDefault();
     const normalizedEmail = email.trim().toLowerCase();
 
-    if (password.length < 8) {
-      toast.error("Password must be at least 8 characters");
+    if (password.length < 6) {
+      toast.error("Password must be at least 6 characters");
       return;
     }
 
@@ -121,41 +140,34 @@ function AuthPage() {
 
     setBusy(true);
 
-    if (mode === "signin") {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      setBusy(false);
-
-      if (error) {
-        toast.error("Sign in failed", { description: error.message });
-        return;
-      }
-
-      if (data.user) {
-        claimAdminSlot(data.user.email || normalizedEmail);
+    try {
+      if (mode === "signin") {
+        const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+        claimAdminSlot(userCredential.user.email || normalizedEmail);
         toast.success("Welcome back, Admin!");
         navigate({ to: "/admin", replace: true });
-      }
-    } else {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { emailRedirectTo: `${window.location.origin}/admin` },
-      });
-      setBusy(false);
-
-      if (error) {
-        toast.error("Sign up failed", { description: error.message });
-        return;
-      }
-
-      claimAdminSlot(normalizedEmail);
-
-      if (data.session) {
+      } else {
+        const userCredential = await createUserWithEmailAndPassword(
+          auth,
+          normalizedEmail,
+          password,
+        );
+        claimAdminSlot(userCredential.user.email || normalizedEmail);
         toast.success("Admin account created successfully");
         navigate({ to: "/admin", replace: true });
-      } else {
-        toast.success("Check your email to confirm your admin account");
       }
+    } catch (err: unknown) {
+      const error = err as Error;
+      const msg = error?.message || String(err);
+      toast.error(mode === "signin" ? "Sign in failed" : "Sign up failed", {
+        description: msg.includes("auth/invalid-credential")
+          ? "Invalid email or password"
+          : msg.includes("auth/email-already-in-use")
+            ? "Email is already registered. Please sign in instead."
+            : msg,
+      });
+    } finally {
+      setBusy(false);
     }
   };
 

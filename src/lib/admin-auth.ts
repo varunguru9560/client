@@ -1,4 +1,5 @@
-import { supabase } from "@/integrations/supabase/client";
+import { signOut } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 const ALLOWED_ADMINS_KEY = "tax_maestro_allowed_admin_emails";
 
@@ -84,7 +85,7 @@ export function claimAdminSlot(email: string): boolean {
 
 export async function resetAllAdminSessions(): Promise<void> {
   try {
-    await supabase.auth.signOut();
+    await signOut(auth);
   } catch (e) {
     console.warn("SignOut notice during admin reset:", e);
   }
@@ -92,7 +93,7 @@ export async function resetAllAdminSessions(): Promise<void> {
   if (typeof window !== "undefined") {
     // Clear local storage session tokens
     Object.keys(localStorage).forEach((key) => {
-      if (key.includes("supabase") || key.includes("sb-") || key.includes("auth")) {
+      if (key.includes("firebase") || key.includes("supabase") || key.includes("auth")) {
         localStorage.removeItem(key);
       }
     });

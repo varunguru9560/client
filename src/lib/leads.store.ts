@@ -1,4 +1,15 @@
-import { supabase } from "@/integrations/supabase/client";
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  orderBy,
+  onSnapshot,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 export interface LeadItem {
   id: string;
@@ -40,30 +51,30 @@ export function saveStoredLeads(leads: LeadItem[]): void {
   window.dispatchEvent(new Event("leads-changed"));
 }
 
-export async function fetchSupabaseLeads(): Promise<LeadItem[]> {
+export async function fetchFirebaseLeads(): Promise<LeadItem[]> {
   try {
-    const { data, error } = await supabase
-      .from("leads")
-      .select("*")
-      .order("created_at", { ascending: false });
+    const colRef = collection(db, "leads");
+    const q = query(colRef, orderBy("created_at", "desc"));
+    const snapshot = await getDocs(q);
 
-    if (error) {
-      console.warn("[Supabase Fetch Error]:", error.message);
+    if (snapshot.empty) {
       return getStoredLeads();
     }
 
-    if (!data) return getStoredLeads();
-
-    const remoteLeads: LeadItem[] = data.map((item) => ({
-      id: String(item.id),
-      name: item.name || "Anonymous",
-      phone: item.phone || "",
-      email: item.email || undefined,
-      service: item.service || undefined,
-      message: item.message || undefined,
-      status: (item.status as LeadItem["status"]) || "new",
-      created_at: item.created_at || new Date().toISOString(),
-    }));
+    const remoteLeads: LeadItem[] = [];
+    snapshot.forEach((d) => {
+      const item = d.data();
+      remoteLeads.push({
+        id: d.id,
+        name: item.name || "Anonymous",
+        phone: item.phone || "",
+        email: item.email || undefined,
+        service: item.service || undefined,
+        message: item.message || undefined,
+        status: (item.status as LeadItem["status"]) || "new",
+        created_at: item.created_at || new Date().toISOString(),
+      });
+    });
 
     // Merge remote with local store
     const local = getStoredLeads();
@@ -79,10 +90,13 @@ export async function fetchSupabaseLeads(): Promise<LeadItem[]> {
     saveStoredLeads(merged);
     return merged;
   } catch (err) {
-    console.warn("Exception fetching Supabase leads:", err);
+    console.warn("Exception fetching Firebase leads:", err);
     return getStoredLeads();
   }
 }
+
+// Backwards-compat alias
+export const fetchSupabaseLeads = fetchFirebaseLeads;
 
 export async function addStoredLead(data: {
   name: string;
@@ -91,48 +105,45 @@ export async function addStoredLead(data: {
   service?: string;
   message?: string;
 }): Promise<{ lead: LeadItem; error: string | null }> {
+  const newLeadId = "lead-" + Date.now() + "-" + Math.random().toString(36).substring(2, 7);
+  const createdAt = new Date().toISOString();
+
   const newLead: LeadItem = {
-    id: "lead-" + Date.now() + "-" + Math.random().toString(36).substring(2, 7),
+    id: newLeadId,
     name: data.name,
     phone: data.phone,
     email: data.email,
     service: data.service,
     message: data.message,
     status: "new",
-    created_at: new Date().toISOString(),
+    created_at: createdAt,
   };
 
   const current = getStoredLeads();
   const updated = [newLead, ...current];
   saveStoredLeads(updated);
 
-  let supabaseError: string | null = null;
+  let firebaseError: string | null = null;
 
   try {
-    // Insert into Supabase table without requiring .select() so anonymous RLS works
-    const { error } = await supabase.from("leads").insert({
+    const docRef = doc(db, "leads", newLeadId);
+    await setDoc(docRef, {
       name: data.name,
       phone: data.phone,
       email: data.email || null,
       service: data.service || null,
       message: data.message || null,
       status: "new",
+      created_at: createdAt,
     });
-
-    if (error) {
-      console.error("[Supabase Lead Insert Error]:", error.message);
-      supabaseError = error.message;
-    } else {
-      console.log("[Supabase Lead Insert Success]");
-      fetchSupabaseLeads();
-    }
+    console.log("[Firebase Lead Insert Success]", newLeadId);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[Supabase Lead Exception]:", msg);
-    supabaseError = msg;
+    console.error("[Firebase Lead Exception]:", msg);
+    firebaseError = msg;
   }
 
-  return { lead: newLead, error: supabaseError };
+  return { lead: newLead, error: firebaseError };
 }
 
 export function updateStoredLeadStatus(id: string, status: LeadItem["status"]): void {
@@ -140,14 +151,10 @@ export function updateStoredLeadStatus(id: string, status: LeadItem["status"]): 
   const updated = current.map((l) => (l.id === id ? { ...l, status } : l));
   saveStoredLeads(updated);
 
-  supabase
-    .from("leads")
-    .update({ status })
-    .eq("id", id)
-    .then(({ error }) => {
-      if (error) console.warn("Supabase lead status update notice:", error.message);
-    })
-    .catch(() => {});
+  const docRef = doc(db, "leads", id);
+  updateDoc(docRef, { status }).catch((err) => {
+    console.warn("Firebase lead status update notice:", err);
+  });
 }
 
 export function deleteStoredLead(id: string): void {
@@ -155,12 +162,42 @@ export function deleteStoredLead(id: string): void {
   const updated = current.filter((l) => l.id !== id);
   saveStoredLeads(updated);
 
-  supabase
-    .from("leads")
-    .delete()
-    .eq("id", id)
-    .then(({ error }) => {
-      if (error) console.warn("Supabase lead delete notice:", error.message);
-    })
-    .catch(() => {});
+  const docRef = doc(db, "leads", id);
+  deleteDoc(docRef).catch((err) => {
+    console.warn("Firebase lead delete notice:", err);
+  });
+}
+
+export function subscribeToFirebaseLeads(callback: (leads: LeadItem[]) => void): () => void {
+  try {
+    const colRef = collection(db, "leads");
+    const q = query(colRef, orderBy("created_at", "desc"));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const remoteLeads: LeadItem[] = [];
+        snapshot.forEach((d) => {
+          const item = d.data();
+          remoteLeads.push({
+            id: d.id,
+            name: item.name || "Anonymous",
+            phone: item.phone || "",
+            email: item.email || undefined,
+            service: item.service || undefined,
+            message: item.message || undefined,
+            status: (item.status as LeadItem["status"]) || "new",
+            created_at: item.created_at || new Date().toISOString(),
+          });
+        });
+        saveStoredLeads(remoteLeads);
+        callback(remoteLeads);
+      },
+      (err) => {
+        console.warn("Firebase leads subscription error:", err);
+      },
+    );
+  } catch (err) {
+    console.warn("Could not subscribe to Firebase leads:", err);
+    return () => {};
+  }
 }

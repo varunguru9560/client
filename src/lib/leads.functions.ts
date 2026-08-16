@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import firebaseConfig from "../../firebase-applet-config.json";
 
 const leadSchema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -27,17 +27,63 @@ export const submitLead = createServerFn({ method: "POST" })
   });
 
 export const syncLeadsToSheet = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .handler(async ({ context }): Promise<{ ok: boolean; count: number; error?: string }> => {
+  .inputValidator(
+    (input?: {
+      leads?: {
+        name: string;
+        phone: string;
+        email?: string;
+        service?: string;
+        message?: string;
+        status?: string;
+        created_at: string;
+      }[];
+    }) => input,
+  )
+  .handler(async ({ data }): Promise<{ ok: boolean; count: number; error?: string }> => {
     const { appendLeadsToSheet } = await import("@/lib/sheets.server");
 
-    const { data, error } = await context.supabase
-      .from("leads")
-      .select("created_at, name, phone, email, service, message, status")
-      .order("created_at", { ascending: true });
-    if (error) return { ok: false, count: 0, error: error.message };
+    let rows: {
+      name: string;
+      phone: string;
+      email?: string;
+      service?: string;
+      message?: string;
+      status?: string;
+      created_at: string;
+    }[] = data?.leads || [];
 
-    const rows = data ?? [];
+    if (!rows.length) {
+      try {
+        const dbId = firebaseConfig.firestoreDatabaseId || "(default)";
+        const projectId = firebaseConfig.projectId;
+        const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${dbId}/documents/leads?key=${firebaseConfig.apiKey}`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const json = await response.json();
+          const docs =
+            (json.documents as {
+              fields?: Record<string, { stringValue?: string }>;
+            }[]) || [];
+          rows = docs.map((doc) => ({
+            name: doc.fields?.name?.stringValue || "",
+            phone: doc.fields?.phone?.stringValue || "",
+            email: doc.fields?.email?.stringValue || "",
+            service: doc.fields?.service?.stringValue || "",
+            message: doc.fields?.message?.stringValue || "",
+            status: doc.fields?.status?.stringValue || "new",
+            created_at: doc.fields?.created_at?.stringValue || new Date().toISOString(),
+          }));
+        }
+      } catch (err) {
+        console.warn("Could not fetch remote Firestore leads for sheet sync:", err);
+      }
+    }
+
+    if (!rows.length) {
+      return { ok: true, count: 0 };
+    }
+
     const result = await appendLeadsToSheet(rows);
     return result.ok
       ? { ok: true, count: rows.length }

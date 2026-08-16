@@ -1,8 +1,18 @@
-import { supabase } from "@/integrations/supabase/client";
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  query,
+  orderBy,
+  onSnapshot,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 export interface ClientDocument {
   id: string;
-  clientPhone: string; // e.g. "9876543210"
+  clientPhone: string;
   clientName: string;
   clientEmail?: string;
   title: string;
@@ -16,8 +26,8 @@ export interface ClientDocument {
     | "Other";
   uploadedBy: "consultant" | "client";
   uploaderName: string;
-  fileUrl?: string; // Data URI or URL
-  driveUrl?: string; // Google Drive URL
+  fileUrl?: string; // Data URI or file URL
+  driveUrl?: string; // Google Drive URL or direct link
   fileName?: string;
   fileSize?: string;
   notes?: string;
@@ -44,11 +54,10 @@ if (typeof window !== "undefined" && "BroadcastChannel" in window) {
       window.dispatchEvent(new Event("client-docs-changed"));
     };
   } catch {
-    // Fallback if BroadcastChannel fails
+    // Fallback
   }
 }
 
-// Clean initial state with NO fake or demo documents
 const initialDocuments: ClientDocument[] = [];
 
 export function normalizePhone(phone: string): string {
@@ -89,7 +98,6 @@ export function getAllClientDocuments(): ClientDocument[] {
       return initialDocuments;
     }
     const parsed = JSON.parse(raw) as ClientDocument[];
-    // Filter out old demo/fake documents
     const cleaned = parsed.filter((d) => !d.id.startsWith("doc-demo-"));
     if (cleaned.length !== parsed.length) {
       localStorage.setItem(STORAGE_DOCS_KEY, JSON.stringify(cleaned));
@@ -141,48 +149,37 @@ export function getDocumentsForClient(
 }
 
 /**
- * Fetch all documents from Supabase database and merge with local documents.
+ * Fetch all documents from Firebase Firestore database and merge with local documents.
  */
-export async function fetchSupabaseClientDocuments(): Promise<ClientDocument[]> {
+export async function fetchFirebaseClientDocuments(): Promise<ClientDocument[]> {
   try {
-    const { data: leadsDocs, error } = await supabase
-      .from("leads")
-      .select("*")
-      .eq("status", "document")
-      .order("created_at", { ascending: false });
+    const colRef = collection(db, "client_documents");
+    const q = query(colRef, orderBy("createdAt", "desc"));
+    const snapshot = await getDocs(q);
 
-    if (error) {
-      console.warn("[Supabase Docs Fetch Warning]:", error.message);
-      return getAllClientDocuments();
-    }
-
-    if (!leadsDocs || leadsDocs.length === 0) {
+    if (snapshot.empty) {
       return getAllClientDocuments();
     }
 
     const remoteDocs: ClientDocument[] = [];
-    leadsDocs.forEach((row) => {
-      if (row.message) {
-        try {
-          const parsed = JSON.parse(row.message) as ClientDocument;
-          if (parsed && parsed.id && parsed.title) {
-            remoteDocs.push(parsed);
-          }
-        } catch {
-          remoteDocs.push({
-            id: String(row.id),
-            clientPhone: row.phone || "",
-            clientName: row.name || "Client",
-            clientEmail: row.email || undefined,
-            title: row.service || "Uploaded Document",
-            category: "Other",
-            uploadedBy: "client",
-            uploaderName: row.name || "Client",
-            notes: row.message || undefined,
-            createdAt: row.created_at || new Date().toISOString(),
-          });
-        }
-      }
+    snapshot.forEach((d) => {
+      const data = d.data();
+      remoteDocs.push({
+        id: d.id,
+        clientPhone: data.clientPhone || "",
+        clientName: data.clientName || "Client",
+        clientEmail: data.clientEmail || undefined,
+        title: data.title || "Uploaded Document",
+        category: data.category || "Other",
+        uploadedBy: data.uploadedBy || "client",
+        uploaderName: data.uploaderName || data.clientName || "Client",
+        fileUrl: data.fileUrl || undefined,
+        driveUrl: data.driveUrl || undefined,
+        fileName: data.fileName || undefined,
+        fileSize: data.fileSize || undefined,
+        notes: data.notes || undefined,
+        createdAt: data.createdAt || data.created_at || new Date().toISOString(),
+      });
     });
 
     // Merge remote with local store
@@ -199,86 +196,50 @@ export async function fetchSupabaseClientDocuments(): Promise<ClientDocument[]> 
     saveClientDocuments(merged);
     return merged;
   } catch (err) {
-    console.warn("Exception fetching Supabase documents:", err);
+    console.warn("Exception fetching Firebase documents:", err);
     return getAllClientDocuments();
   }
 }
 
+// Alias for backwards-compat during migration
+export const fetchSupabaseClientDocuments = fetchFirebaseClientDocuments;
+
 /**
- * Add a document locally AND push it to Supabase database.
+ * Add a document locally AND push it to Firebase Firestore.
  */
 export async function addClientDocument(
-  doc: Omit<ClientDocument, "id" | "createdAt">,
+  docData: Omit<ClientDocument, "id" | "createdAt">,
 ): Promise<ClientDocument> {
+  const newDocId = "doc-" + Date.now() + "-" + Math.random().toString(36).substring(2, 7);
+  const createdAt = new Date().toISOString();
+
   const newDoc: ClientDocument = {
-    ...doc,
-    id: "doc-" + Date.now() + "-" + Math.random().toString(36).substring(2, 7),
-    createdAt: new Date().toISOString(),
+    ...docData,
+    id: newDocId,
+    createdAt,
   };
 
   const current = getAllClientDocuments();
   const updated = [newDoc, ...current];
   saveClientDocuments(updated);
 
-  // Sync with Supabase
+  // Sync with Firebase Firestore
   try {
-    const { error } = await supabase.from("leads").insert({
-      name: newDoc.clientName,
-      phone: newDoc.clientPhone,
-      email: newDoc.clientEmail || null,
-      service: `DOC::${newDoc.category}::${newDoc.uploadedBy}`,
-      message: JSON.stringify(newDoc),
-      status: "document",
+    const docRef = doc(db, "client_documents", newDocId);
+    await setDoc(docRef, {
+      ...newDoc,
+      created_at: createdAt,
     });
-
-    if (error) {
-      console.warn("[Supabase Document Insert Warning]:", error.message);
-    } else {
-      console.log("[Supabase Document Insert Success]");
-    }
+    console.log("[Firebase Document Insert Success]", newDocId);
   } catch (err) {
-    console.warn("[Supabase Document Exception]:", err);
+    console.warn("[Firebase Document Exception]:", err);
   }
 
   return newDoc;
 }
 
 /**
- * Upload a binary file directly to Supabase Storage bucket `client-documents`.
- * Falls back gracefully if bucket does not exist or upload fails.
- */
-export async function uploadFileToSupabaseStorage(
-  file: File,
-  folderPath = "client-uploads",
-): Promise<string | null> {
-  try {
-    const fileExt = file.name.split(".").pop();
-    const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
-    const filePath = `${folderPath}/${fileName}`;
-
-    const { data, error } = await supabase.storage.from("client-documents").upload(filePath, file, {
-      cacheControl: "3600",
-      upsert: true,
-    });
-
-    if (error) {
-      console.warn("[Supabase Storage Upload Warning]:", error.message);
-      return null;
-    }
-
-    const { data: publicUrlData } = supabase.storage
-      .from("client-documents")
-      .getPublicUrl(data.path);
-
-    return publicUrlData.publicUrl || null;
-  } catch (err) {
-    console.warn("Exception uploading to Supabase Storage:", err);
-    return null;
-  }
-}
-
-/**
- * Delete a document locally AND from Supabase.
+ * Delete a document locally AND from Firebase Firestore.
  */
 export async function deleteClientDocument(id: string): Promise<void> {
   const current = getAllClientDocuments();
@@ -286,8 +247,52 @@ export async function deleteClientDocument(id: string): Promise<void> {
   saveClientDocuments(updated);
 
   try {
-    await supabase.from("leads").delete().eq("status", "document").filter("message", "cs", id);
-  } catch {
-    // Ignore deletion errors on remote
+    const docRef = doc(db, "client_documents", id);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.warn("Exception deleting from Firebase:", err);
+  }
+}
+
+/**
+ * Set up real-time listener for Firestore client documents
+ */
+export function subscribeToClientDocuments(callback: (docs: ClientDocument[]) => void): () => void {
+  try {
+    const colRef = collection(db, "client_documents");
+    const q = query(colRef, orderBy("createdAt", "desc"));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const docs: ClientDocument[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          docs.push({
+            id: d.id,
+            clientPhone: data.clientPhone || "",
+            clientName: data.clientName || "Client",
+            clientEmail: data.clientEmail || undefined,
+            title: data.title || "Uploaded Document",
+            category: data.category || "Other",
+            uploadedBy: data.uploadedBy || "client",
+            uploaderName: data.uploaderName || data.clientName || "Client",
+            fileUrl: data.fileUrl || undefined,
+            driveUrl: data.driveUrl || undefined,
+            fileName: data.fileName || undefined,
+            fileSize: data.fileSize || undefined,
+            notes: data.notes || undefined,
+            createdAt: data.createdAt || data.created_at || new Date().toISOString(),
+          });
+        });
+        saveClientDocuments(docs);
+        callback(docs);
+      },
+      (error) => {
+        console.warn("Firebase document subscription warning:", error);
+      },
+    );
+  } catch (err) {
+    console.warn("Could not subscribe to Firestore documents:", err);
+    return () => {};
   }
 }
