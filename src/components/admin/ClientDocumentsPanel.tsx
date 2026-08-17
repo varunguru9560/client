@@ -31,6 +31,7 @@ import {
   deleteClientDocument,
   fetchFirebaseClientDocuments,
   subscribeToClientDocuments,
+  uploadFileToFirebaseStorage,
   normalizePhone,
   ClientDocument,
 } from "@/lib/client-vault";
@@ -119,12 +120,19 @@ export function ClientDocumentsPanel() {
       fileName = file.name;
       fileSize = `${(file.size / 1024).toFixed(0)} KB`;
 
-      // Convert file to Data URL for direct storage & preview
-      fileDataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      });
+      // Attempt Firebase Cloud Storage upload first
+      const storageUrl = await uploadFileToFirebaseStorage(file, `admin_vault/${cleanPhone}`);
+
+      if (storageUrl) {
+        fileDataUrl = storageUrl;
+      } else {
+        // Fallback to Data URL
+        fileDataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+      }
     }
 
     await addClientDocument({

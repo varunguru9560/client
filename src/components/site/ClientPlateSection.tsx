@@ -34,6 +34,7 @@ import {
   deleteClientDocument,
   fetchFirebaseClientDocuments,
   subscribeToClientDocuments,
+  uploadFileToFirebaseStorage,
   normalizePhone,
   ClientDocument,
   ClientUser,
@@ -123,12 +124,22 @@ export function ClientPlateSection() {
       fileName = selectedFile.name;
       fileSize = `${(selectedFile.size / 1024).toFixed(0)} KB`;
 
-      // Convert file to Data URL for instant storage & preview
-      fileDataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(selectedFile);
-      });
+      // Attempt Firebase Cloud Storage upload first
+      const storageUrl = await uploadFileToFirebaseStorage(
+        selectedFile,
+        `client_vault/${user.phone || "general"}`,
+      );
+
+      if (storageUrl) {
+        fileDataUrl = storageUrl;
+      } else {
+        // Fallback to Data URL
+        fileDataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(selectedFile);
+        });
+      }
     }
 
     await addClientDocument({

@@ -8,7 +8,8 @@ import {
   orderBy,
   onSnapshot,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage } from "@/lib/firebase";
 
 export interface ClientDocument {
   id: string;
@@ -236,6 +237,27 @@ export async function addClientDocument(
   }
 
   return newDoc;
+}
+
+/**
+ * Upload binary file to Firebase Cloud Storage.
+ * Falls back gracefully to null if storage is not enabled or fails.
+ */
+export async function uploadFileToFirebaseStorage(
+  file: File,
+  folder = "documents",
+): Promise<string | null> {
+  try {
+    const timestamp = Date.now();
+    const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const storageRef = ref(storage, `${folder}/${timestamp}_${safeName}`);
+    const snapshot = await uploadBytes(storageRef, file);
+    const downloadUrl = await getDownloadURL(snapshot.ref);
+    return downloadUrl;
+  } catch (err) {
+    console.warn("Firebase Storage direct upload skipped/failed:", err);
+    return null;
+  }
 }
 
 /**
